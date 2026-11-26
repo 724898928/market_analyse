@@ -12,7 +12,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::deriv::{derivatives, smooth as smooth_series};
+use crate::deriv::{derivatives_sparse, moving_average as moving_average_series};
 use crate::market::{
     DataSource, KlineBar, LeaderBoard, Market, Period, Quote, demo_kline, demo_quote,
     fetch_daily_leaders, fetch_market_data, fetch_quote, futu_configured, parse_symbol,
@@ -165,16 +165,15 @@ struct BarOut {
 
 #[derive(Serialize)]
 struct SeriesOut {
-    d1: Vec<f64>,
-    d2: Vec<f64>,
+    d1: Vec<Option<f64>>,
+    d2: Vec<Option<f64>>,
 }
 
 #[derive(Serialize)]
 struct DerivOut {
-    open: SeriesOut,
-    high: SeriesOut,
-    low: SeriesOut,
-    close: SeriesOut,
+    ma5: SeriesOut,
+    ma10: SeriesOut,
+    ma20: SeriesOut,
 }
 
 async fn api_kline(
@@ -361,21 +360,26 @@ fn build_response(
         }
     };
 
-    let series = |get: fn(&KlineBar) -> f64| -> Result<SeriesOut, ApiError> {
-        let raw: Vec<f64> = bars.iter().map(get).collect();
-        let values = smooth_series(&raw, smooth);
-        let pairs = derivatives(&x_axis, &values).map_err(ApiError::BadRequest)?;
+    let closes: Vec<f64> = bars.iter().map(|bar| bar.close).collect();
+    let series = |window: usize| -> Result<SeriesOut, ApiError> {
+        let values = moving_average_series(&closes, window);
+        let pairs = derivatives_sparse(&x_axis, &values, smooth).map_err(ApiError::BadRequest)?;
         Ok(SeriesOut {
-            d1: pairs.iter().map(|pair| pair.first).collect(),
-            d2: pairs.iter().map(|pair| pair.second).collect(),
+            d1: pairs
+                .iter()
+                .map(|pair| (*pair).map(|value| value.first))
+                .collect(),
+            d2: pairs
+                .iter()
+                .map(|pair| (*pair).map(|value| value.second))
+                .collect(),
         })
     };
 
     let deriv = DerivOut {
-        open: series(|bar| bar.open)?,
-        high: series(|bar| bar.high)?,
-        low: series(|bar| bar.low)?,
-        close: series(|bar| bar.close)?,
+        ma5: series(5)?,
+        ma10: series(10)?,
+        ma20: series(20)?,
     };
 
     let out_bars = bars

@@ -222,7 +222,7 @@
 <body>
   <header>
     <h1>K线导数分析器</h1>
-    <p>按真实时间间隔计算 OHLC 一阶导数与二阶导数，辅助观察趋势速度与加速度</p>
+    <p>按真实时间间隔计算 MA5 / MA10 / MA20 均线的一阶导数与二阶导数，辅助观察趋势速度与加速度</p>
   </header>
 
   <main>
@@ -261,7 +261,7 @@
         <input id="limit" type="number" min="10" max="2000" step="10" value="300">
       </label>
       <label>平滑窗口
-        <input id="smooth" type="number" min="1" max="60" step="1" value="1" title="1 表示不做平滑；大于 1 时先做简单移动平均再求导">
+        <input id="smooth" type="number" min="1" max="60" step="1" value="1" title="1 表示不额外平滑；大于 1 时对均线再做简单移动平均再求导">
       </label>
       <label>时间变量
         <select id="mode">
@@ -363,16 +363,16 @@
 
     <section class="panel">
       <div class="chart-head">
-        <h2>一阶导数 <span id="d1Unit"></span></h2>
-        <span class="hint">价格随时间的变化率（速度）· 白线为 0 位线</span>
+        <h2>均线一阶导数 <span id="d1Unit"></span></h2>
+        <span class="hint">MA5 / MA10 / MA20 的变化率（速度）· 白色虚线为 0 位线</span>
       </div>
       <div id="d1Chart" class="chart"></div>
     </section>
 
     <section class="panel">
       <div class="chart-head">
-        <h2>二阶导数 <span id="d2Unit"></span></h2>
-        <span class="hint">变化率的变化率（加速度）· 白线为 0 位线</span>
+        <h2>均线二阶导数 <span id="d2Unit"></span></h2>
+        <span class="hint">MA5 / MA10 / MA20 变化率的变化率（加速度）· 白色虚线为 0 位线</span>
       </div>
       <div id="d2Chart" class="chart"></div>
     </section>
@@ -384,10 +384,25 @@
       </div>
       <table>
         <thead>
-          <tr><th>价格序列</th><th>最新价格</th><th>一阶导数</th><th>二阶导数</th></tr>
+          <tr><th>均线</th><th>最新均线</th><th>一阶导数</th><th>二阶导数</th></tr>
         </thead>
         <tbody id="latestBody">
           <tr><td colspan="4" style="text-align:center;color:#6b7280">暂无数据</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <div class="chart-head">
+        <h2>短期预测 <span id="forecastUnit"></span></h2>
+        <span class="hint">黄色为预测值 · 基于最新均线与速度/加速度外推 · 仅供研究，不构成投资建议</span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>均线</th><th>当前均线</th><th>下一根预测</th><th>2根后预测</th><th>3根后预测</th><th>方向</th></tr>
+        </thead>
+        <tbody id="forecastBody">
+          <tr><td colspan="6" style="text-align:center;color:#6b7280">暂无数据</td></tr>
         </tbody>
       </table>
     </section>
@@ -396,11 +411,12 @@
       <h2>计算说明</h2>
       <ul>
         <li><strong>MA5 / MA10 / MA20</strong>：分别为最近 5 / 10 / 20 根K线收盘价的简单移动平均线（MA = Moving Average），日K下即 5 / 10 / 20 日均线，颜色依次为橙 / 紫 / 蓝；不足对应根数时不绘制，用于观察短、中、长期均线趋势与金叉死叉。</li>
-        <li><strong>一阶导数 dP/dt</strong>：内部点使用非均匀时间步长的三点中心差分；首尾点使用四点前向 / 后向差分，端点精度更高。</li>
-        <li><strong>二阶导数 d²P/dt²</strong>：使用非均匀时间步长的二阶差分公式，刻画趋势的加速度；首尾点同样采用四点公式。</li>
+        <li><strong>均线一阶导数 dMA/dt</strong>：先计算 MA5 / MA10 / MA20，再对均线序列求一阶导数；内部点使用非均匀时间步长的三点中心差分，首尾点使用四点前向 / 后向差分。均线不足窗口时不绘制对应导数。</li>
+        <li><strong>均线二阶导数 d²MA/dt²</strong>：在均线序列上使用非均匀时间步长的二阶差分公式，刻画趋势的加速度；首尾点同样采用四点公式。</li>
+        <li><strong>零线</strong>：白色虚线标记 0 值；纵轴按导数值自动缩放，仅在 0 落入数据范围时显示，避免压缩数据曲线。</li>
         <li><strong>时间变量</strong>：“真实时间间隔”以自然时间计算，休市、午休与节假日间隔计入其中；“交易时间”剔除休市，按交易分钟 / 交易日 / 周 / 月等间距计算；“K线序号”则每根K线为 1 个单位。</li>
         <li><strong>时间对齐</strong>：日 / 周 / 月K的历史时间戳对齐到收盘时刻；交易时段内的最后一根K线使用最新报价时间，避免用午夜时间低估实时变化率。</li>
-        <li><strong>平滑窗口</strong>：大于 1 时先对 OHLC 分别做简单移动平均，再计算导数，可降低噪声，但会引入滞后。</li>
+        <li><strong>平滑窗口</strong>：默认 1 不额外平滑；大于 1 时先对 MA 均线再做简单移动平均，再计算导数，可进一步降低噪声，但会引入滞后。</li>
         <li><strong>数据清洗</strong>：剔除价格非正、最高价 / 最低价与开收盘不一致的异常K线，按时间排序并对重复时间戳保留最新一条，再截取所需数量。</li>
         <li><strong>复权</strong>：A股日 / 周 / 月K支持前复权与后复权；分钟K线以及港股、美股仅提供不复权数据，状态栏会提示实际复权方式。</li>
         <li><strong>数据源</strong>：可选富途牛牛、腾讯行情、东方财富备用通道；自动模式在配置富途 Token 后优先使用富途，失败时依次回退腾讯与东方财富。</li>
@@ -415,10 +431,9 @@
     const UP = '#ef4444';
     const DOWN = '#22c55e';
     const SERIES = [
-      { key: 'open', name: '开盘', color: '#f59e0b' },
-      { key: 'high', name: '最高', color: '#ef4444' },
-      { key: 'low', name: '最低', color: '#22c55e' },
-      { key: 'close', name: '收盘', color: '#3b82f6' },
+      { key: 'ma5', name: 'MA5', color: '#f59e0b', window: 5 },
+      { key: 'ma10', name: 'MA10', color: '#a78bfa', window: 10 },
+      { key: 'ma20', name: 'MA20', color: '#38bdf8', window: 20 },
     ];
 
     const $ = (id) => document.getElementById(id);
@@ -572,6 +587,56 @@
       }
     }
 
+    function forecastStep(data) {
+      if (data.mode === 'index' || data.mode === 'trading') return 1;
+      const divisor = data.unit === '分钟' ? 60 : 86400;
+      const gaps = [];
+      const start = Math.max(1, data.bars.length - 20);
+      for (let i = start; i < data.bars.length; i += 1) {
+        const gap = (data.bars[i].t - data.bars[i - 1].t) / 1000 / divisor;
+        if (Number.isFinite(gap) && gap > 0) gaps.push(gap);
+      }
+      if (!gaps.length) return 1;
+      gaps.sort((a, b) => a - b);
+      return gaps[Math.floor(gaps.length / 2)];
+    }
+
+    function renderForecast(data) {
+      const last = data.bars.length - 1;
+      const closes = data.bars.map((bar) => bar.close);
+      const step = forecastStep(data);
+      const rows = SERIES.map((series) => {
+        const current = movingAverage(closes, series.window)[last];
+        const d1 = data.deriv[series.key].d1[last];
+        const d2 = data.deriv[series.key].d2[last];
+        if (!Number.isFinite(current) || !Number.isFinite(d1) || !Number.isFinite(d2)) {
+          return '<tr>' +
+            '<td><span class="dot" style="background:' + series.color + '"></span>' + series.name + '</td>' +
+            '<td>' + fmtPrice(current) + '</td>' +
+            '<td colspan="3" style="text-align:center;color:#6b7280">数据不足</td>' +
+            '<td>-</td>' +
+            '</tr>';
+        }
+        const values = [1, 2, 3].map((horizon) => {
+          const h = horizon * step;
+          return current + d1 * h + 0.5 * d2 * h * h;
+        });
+        const change = values[0] - current;
+        const trendClass = change > 1e-9 ? 'forecast-up' : (change < -1e-9 ? 'forecast-down' : 'forecast-flat');
+        const trendText = change > 1e-9 ? '▲ 上行' : (change < -1e-9 ? '▼ 下行' : '→ 持平');
+        const cells = values.map((value) =>
+          '<td><span class="forecast-value">' + fmtPrice(value) + '</span></td>'
+        ).join('');
+        return '<tr>' +
+          '<td><span class="dot" style="background:' + series.color + '"></span>' + series.name + '</td>' +
+          '<td>' + fmtPrice(current) + '</td>' +
+          cells +
+          '<td class="' + trendClass + '">' + trendText + '</td>' +
+          '</tr>';
+      });
+      $('forecastBody').innerHTML = rows.join('');
+      $('forecastUnit').textContent = '（步长 ' + fmtPrice(step) + data.unit + ' / 根）';
+    }
     function render(data) {
       hasData = true;
       const dates = data.bars.map((bar) => bar.date);
@@ -598,18 +663,19 @@
       const start = lastZoom ? lastZoom.start : defaultStart(dates.length);
       const end = lastZoom ? lastZoom.end : 100;
 
-      $('d1Unit').textContent = '（价格/' + data.unit + '）';
-      $('d2Unit').textContent = '（价格/' + data.unit2 + '）';
+      $('d1Unit').textContent = '（均线价格/' + data.unit + '）';
+      $('d2Unit').textContent = '（均线价格/' + data.unit2 + '）';
 
       renderQuote(data);
       renderLatest(data);
+      renderForecast(data);
       renderKline(data, dates, closes, ohlc, volumes, start, end);
       charts.d1.setOption(
-        derivativeOption('价格/' + data.unit, data.deriv, 'd1', dates, start, end, false),
+        derivativeOption('均线价格/' + data.unit, data.deriv, 'd1', dates, start, end, false),
         true
       );
       charts.d2.setOption(
-        derivativeOption('价格/' + data.unit2, data.deriv, 'd2', dates, start, end, true),
+        derivativeOption('均线价格/' + data.unit2, data.deriv, 'd2', dates, start, end, true),
         true
       );
     }
@@ -783,8 +849,6 @@
         yAxis: {
           type: 'value',
           scale: true,
-          min: (value) => Math.min(0, Number.isFinite(value.min) ? value.min : 0),
-          max: (value) => Math.max(0, Number.isFinite(value.max) ? value.max : 0),
           name: unit,
           nameTextStyle: { color: '#6b7280', fontSize: 11 },
           axisLabel: { color: '#9ca3af', fontSize: 10, formatter: fmtDerivative },
@@ -835,10 +899,11 @@
                 formatter: '0',
                 position: 'end',
                 color: '#ffffff',
-                fontSize: 11,
-                fontWeight: 600,
+                fontSize: 10,
+                fontWeight: 400,
+                opacity: 0.8,
               },
-              lineStyle: { color: '#ffffff', width: 2, type: 'solid', opacity: 0.95 },
+              lineStyle: { color: '#ffffff', width: 1, type: 'dashed', opacity: 0.65 },
               data: [{ yAxis: 0 }],
             },
           },
@@ -891,8 +956,13 @@
 
     function renderLatest(data) {
       const last = data.bars.length - 1;
+      const closes = data.bars.map((bar) => bar.close);
+      const maValues = {};
+      SERIES.forEach((series) => {
+        maValues[series.key] = movingAverage(closes, series.window)[last];
+      });
       const rows = SERIES.map((series) => {
-        const price = data.bars[last][series.key];
+        const price = maValues[series.key];
         const d1 = data.deriv[series.key].d1[last];
         const d2 = data.deriv[series.key].d2[last];
         return '<tr>' +
@@ -904,7 +974,7 @@
       });
       $('latestBody').innerHTML = rows.join('');
       $('latestUnit').textContent =
-        '单位：价格/' + data.unit + '，价格/' + data.unit2 + ' · 最新时间：' + data.bars[last].date;
+        '单位：均线价格/' + data.unit + '，均线价格/' + data.unit2 + ' · 最新时间：' + data.bars[last].date;
     }
 
     async function loadLeaders(page = leadersState.page, silent = false) {

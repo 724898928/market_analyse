@@ -22,6 +22,22 @@ pub fn smooth(values: &[f64], window: usize) -> Vec<f64> {
     out
 }
 
+pub fn moving_average(values: &[f64], window: usize) -> Vec<Option<f64>> {
+    let window = window.max(1);
+    let mut out = vec![None; values.len()];
+    let mut sum = 0.0;
+    for (i, &value) in values.iter().enumerate() {
+        sum += value;
+        if i >= window {
+            sum -= values[i - window];
+        }
+        if i + 1 >= window {
+            out[i] = Some(sum / window as f64);
+        }
+    }
+    out
+}
+
 pub fn derivatives(x: &[f64], y: &[f64]) -> Result<Vec<DerivativePair>, String> {
     if x.len() != y.len() {
         return Err("时间轴与价格序列长度不一致".to_string());
@@ -110,6 +126,38 @@ pub fn derivatives(x: &[f64], y: &[f64]) -> Result<Vec<DerivativePair>, String> 
             2.0 * yl / (h1 * (h1 + h2)) - 2.0 * ym / (h1 * h2) + 2.0 * yb / (h2 * (h1 + h2));
     }
 
+    Ok(out)
+}
+
+pub fn derivatives_sparse(
+    x: &[f64],
+    y: &[Option<f64>],
+    smooth_window: usize,
+) -> Result<Vec<Option<DerivativePair>>, String> {
+    if x.len() != y.len() {
+        return Err("时间轴与价格序列长度不一致".to_string());
+    }
+
+    let indices: Vec<usize> = y
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| match value {
+            Some(value) if value.is_finite() => Some(index),
+            _ => None,
+        })
+        .collect();
+    let mut out = vec![None; y.len()];
+    if indices.is_empty() {
+        return Ok(out);
+    }
+
+    let compact_x: Vec<f64> = indices.iter().map(|&index| x[index]).collect();
+    let compact_y: Vec<f64> = indices.iter().map(|&index| y[index].unwrap()).collect();
+    let smoothed = smooth(&compact_y, smooth_window);
+    let pairs = derivatives(&compact_x, &smoothed)?;
+    for (index, pair) in indices.into_iter().zip(pairs) {
+        out[index] = Some(pair);
+    }
     Ok(out)
 }
 
@@ -290,5 +338,28 @@ mod tests {
     #[test]
     fn rejects_mismatched_lengths() {
         assert!(derivatives(&[0.0, 1.0], &[1.0]).is_err());
+    }
+
+    #[test]
+    fn moving_average_starts_when_window_filled() {
+        let values = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let result = moving_average(&values, 3);
+        assert_eq!(result[0], None);
+        assert_eq!(result[1], None);
+        assert_close(result[2].unwrap(), 2.0);
+        assert_close(result[3].unwrap(), 3.0);
+        assert_close(result[4].unwrap(), 4.0);
+    }
+
+    #[test]
+    fn sparse_derivatives_preserve_offsets() {
+        let x = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let y = [None, None, Some(4.0), Some(9.0), Some(16.0)];
+        let result = derivatives_sparse(&x, &y, 1).unwrap();
+        assert!(result[0].is_none());
+        assert!(result[1].is_none());
+        assert_close(result[2].unwrap().first, 4.0);
+        assert_close(result[2].unwrap().second, 2.0);
+        assert_close(result[4].unwrap().first, 8.0);
     }
 }
