@@ -364,7 +364,7 @@
     <section class="panel">
       <div class="chart-head">
         <h2>一阶导数 <span id="d1Unit"></span></h2>
-        <span class="hint">价格随时间的变化率（速度）</span>
+        <span class="hint">价格随时间的变化率（速度）· 白线为 0 位线</span>
       </div>
       <div id="d1Chart" class="chart"></div>
     </section>
@@ -372,7 +372,7 @@
     <section class="panel">
       <div class="chart-head">
         <h2>二阶导数 <span id="d2Unit"></span></h2>
-        <span class="hint">变化率的变化率（加速度）</span>
+        <span class="hint">变化率的变化率（加速度）· 白线为 0 位线</span>
       </div>
       <div id="d2Chart" class="chart"></div>
     </section>
@@ -783,6 +783,8 @@
         yAxis: {
           type: 'value',
           scale: true,
+          min: (value) => Math.min(0, Number.isFinite(value.min) ? value.min : 0),
+          max: (value) => Math.max(0, Number.isFinite(value.max) ? value.max : 0),
           name: unit,
           nameTextStyle: { color: '#6b7280', fontSize: 11 },
           axisLabel: { color: '#9ca3af', fontSize: 10, formatter: fmtDerivative },
@@ -803,19 +805,44 @@
             textStyle: { color: '#9ca3af' },
           },
         ],
-        series: SERIES.map((series) => ({
-          name: series.name,
-          type: 'line',
-          data: deriv[series.key][field],
-          showSymbol: false,
-          smooth: false,
-          lineStyle: {
-            width: dashed ? 1.1 : 1.4,
-            color: series.color,
-            type: dashed ? 'dashed' : 'solid',
+        series: [
+          ...SERIES.map((series) => ({
+            name: series.name,
+            type: 'line',
+            data: deriv[series.key][field],
+            showSymbol: false,
+            smooth: false,
+            lineStyle: {
+              width: dashed ? 1.1 : 1.4,
+              color: series.color,
+              type: dashed ? 'dashed' : 'solid',
+            },
+            emphasis: { focus: 'series' },
+          })),
+          {
+            name: '零线',
+            type: 'line',
+            data: [],
+            silent: true,
+            showSymbol: false,
+            tooltip: { show: false },
+            markLine: {
+              silent: true,
+              symbol: 'none',
+              animation: false,
+              label: {
+                show: true,
+                formatter: '0',
+                position: 'end',
+                color: '#ffffff',
+                fontSize: 11,
+                fontWeight: 600,
+              },
+              lineStyle: { color: '#ffffff', width: 2, type: 'solid', opacity: 0.95 },
+              data: [{ yAxis: 0 }],
+            },
           },
-          emphasis: { focus: 'series' },
-        })),
+        ],
       };
     }
 
