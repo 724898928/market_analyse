@@ -104,7 +104,8 @@ pub enum DataSource {
 impl DataSource {
     pub fn parse(value: Option<&str>) -> Result<Self, String> {
         match value.map(str::trim).unwrap_or_default() {
-            "" | "auto" => Ok(Self::Auto),
+            "" => Ok(Self::Eastmoney),
+            "auto" => Ok(Self::Auto),
             "futu" => Ok(Self::Futu),
             "tencent" => Ok(Self::Tencent),
             "eastmoney" => Ok(Self::Eastmoney),
@@ -2129,7 +2130,8 @@ mod tests {
 
     #[test]
     fn parses_data_sources() {
-        assert_eq!(DataSource::parse(None).unwrap(), DataSource::Auto);
+        assert_eq!(DataSource::parse(None).unwrap(), DataSource::Eastmoney);
+        assert_eq!(DataSource::parse(Some("")).unwrap(), DataSource::Eastmoney);
         assert_eq!(DataSource::parse(Some(" auto ")).unwrap(), DataSource::Auto);
         assert_eq!(DataSource::parse(Some("futu")).unwrap(), DataSource::Futu);
         assert_eq!(

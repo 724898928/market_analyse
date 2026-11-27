@@ -131,6 +131,15 @@
     th:first-child, td:first-child { text-align: left; }
     th { color: var(--muted); font-weight: 500; font-size: 12px; }
     .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+    .forecast-value {
+      color: #facc15;
+      font-weight: 700;
+      font-size: 14px;
+      text-shadow: 0 0 10px rgba(250, 204, 21, 0.35);
+    }
+    .forecast-up { color: #f87171; }
+    .forecast-down { color: #34d399; }
+    .forecast-flat { color: #9ca3af; }
     .note ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.9; }
     .note h2 { margin: 0; font-size: 15px; }
     .note strong { color: #cbd5e1; font-weight: 600; }
@@ -232,10 +241,10 @@
       </label>
       <label>数据源
         <select id="source">
-          <option value="auto" selected>自动（富途优先）</option>
+          <option value="auto">自动（富途优先）</option>
           <option value="futu">富途牛牛（需 Token）</option>
           <option value="tencent">腾讯行情</option>
-          <option value="eastmoney">东方财富（备用）</option>
+          <option value="eastmoney" selected>东方财富（默认）</option>
         </select>
       </label>
       <label>K线周期
@@ -569,7 +578,7 @@
           demo: '模拟数据',
           futu: '富途牛牛',
           tencent: '腾讯行情接口',
-          eastmoney: '东方财富行情接口（备用）',
+          eastmoney: '东方财富行情接口',
         };
         const source = sourceLabels[data.source] || data.source;
         const quoteNote = data.quote ? '' : ' · 实时报价暂不可用';
