@@ -111,6 +111,7 @@
     .hint { color: var(--muted); font-size: 12px; }
     .chart { width: 100%; height: 440px; }
     #d1Chart, #d2Chart { height: 300px; }
+    #compareChart { height: 360px; }
     .quote { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 30px; }
     .quote-name { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; }
     .tag {
@@ -404,6 +405,7 @@
     <section class="panel">
       <div class="chart-head">
         <h2>短期预测 <span id="forecastUnit"></span></h2>
+        <li><strong>预测对比</strong>：以每个历史点的最新均线与一阶/二阶导数外推下一根K线，再与实际均线对比；黄色虚线为历史预测并延伸到未来 1 / 2 / 3 根，误差用 MAE / RMSE 汇总。</li>
         <span class="hint">黄色为预测值 · 基于最新均线与速度/加速度外推 · 仅供研究，不构成投资建议</span>
       </div>
       <table>
@@ -416,6 +418,21 @@
       </table>
     </section>
 
+    <section class="panel">
+      <div class="chart-head">
+        <h2>走势预测 vs 真实情况</h2>
+        <span class="hint">黄色虚线为历史一步预测并延伸至未来 · 竖线为当前K线 · 误差统计见下表</span>
+      </div>
+      <div id="compareChart" class="chart"></div>
+      <table>
+        <thead>
+          <tr><th>均线</th><th>一步预测MAE</th><th>RMSE</th><th>样本数</th><th>未来1根</th><th>未来2根</th><th>未来3根</th></tr>
+        </thead>
+        <tbody id="compareStatsBody">
+          <tr><td colspan="7" style="text-align:center;color:#6b7280">暂无数据</td></tr>
+        </tbody>
+      </table>
+    </section>
     <section class="panel note">
       <h2>计算说明</h2>
       <ul>
@@ -473,6 +490,7 @@
         kline: echarts.init($('klineChart')),
         d1: echarts.init($('d1Chart')),
         d2: echarts.init($('d2Chart')),
+        compare: echarts.init($('compareChart')),
       };
       echarts.connect([charts.kline, charts.d1, charts.d2]);
       window.addEventListener('resize', () => {
@@ -610,6 +628,124 @@
       return gaps[Math.floor(gaps.length / 2)];
     }
 
+    function compareSeries(data, series, step) {
+      const n = data.bars.length;
+      const closes = data.bars.map((bar) => bar.close);
+      const ma = movingAverage(closes, series.window);
+      const d1 = data.deriv[series.key].d1;
+      const d2 = data.deriv[series.key].d2;
+      const predicted = new Array(n + 3).fill(null);
+      const errors = [];
+      for (let i = 0; i < n - 1; i += 1) {
+        if (!Number.isFinite(ma[i]) || !Number.isFinite(ma[i + 1]) ||
+            !Number.isFinite(d1[i]) || !Number.isFinite(d2[i])) continue;
+        const value = ma[i] + d1[i] * step + 0.5 * d2[i] * step * step;
+        predicted[i + 1] = value;
+        errors.push(Math.abs(value - ma[i + 1]));
+      }
+      const last = n - 1;
+      if (Number.isFinite(ma[last]) && Number.isFinite(d1[last]) && Number.isFinite(d2[last])) {
+        for (let h = 1; h <= 3; h += 1) {
+          const offset = h * step;
+          predicted[last + h] = ma[last] + d1[last] * offset + 0.5 * d2[last] * offset * offset;
+        }
+      }
+      return { ma, predicted, errors };
+    }
+
+    function renderCompare(data) {
+      const n = data.bars.length;
+      const step = forecastStep(data);
+      const dates = data.bars.map((bar) => bar.date).concat(['预测+1', '预测+2', '预测+3']);
+      const results = {};
+      SERIES.forEach((series) => { results[series.key] = compareSeries(data, series, step); });
+      const start = defaultStart(n);
+      const actualSeries = SERIES.map((series, index) => ({
+        name: series.name + ' 实际',
+        type: 'line',
+        data: results[series.key].ma.concat([null, null, null]),
+        showSymbol: false,
+        smooth: false,
+        lineStyle: { width: 1.6, color: series.color },
+        emphasis: { focus: 'series' },
+        markLine: index === 0 ? {
+          silent: true,
+          symbol: 'none',
+          animation: false,
+          label: { show: true, formatter: '当前', position: 'end', color: '#facc15', fontSize: 10 },
+          lineStyle: { color: '#facc15', width: 1, type: 'dashed', opacity: 0.7 },
+          data: [{ xAxis: data.bars[n - 1].date }],
+        } : undefined,
+      }));
+      const predictedSeries = SERIES.map((series) => ({
+        name: series.name + ' 预测',
+        type: 'line',
+        data: results[series.key].predicted,
+        showSymbol: false,
+        smooth: false,
+        lineStyle: { width: 1.4, color: '#facc15', type: 'dashed', opacity: 0.95 },
+        emphasis: { focus: 'series' },
+      }));
+      charts.compare.setOption({
+        animation: false,
+        backgroundColor: 'transparent',
+        legend: {
+          data: actualSeries.concat(predictedSeries).map((series) => series.name),
+          top: 0,
+          textStyle: { color: '#9ca3af' },
+          itemWidth: 14,
+          itemHeight: 8,
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross', label: { backgroundColor: '#1f2937' } },
+          backgroundColor: 'rgba(17, 24, 39, 0.95)',
+          borderColor: '#374151',
+          textStyle: { color: '#e5e7eb' },
+          valueFormatter: fmtPrice,
+        },
+        grid: { left: 76, right: 24, top: 54, bottom: 60 },
+        xAxis: {
+          type: 'category',
+          data: dates,
+          boundaryGap: false,
+          axisLine: { lineStyle: { color: '#374151' } },
+          axisTick: { show: false },
+          axisLabel: { color: '#9ca3af', fontSize: 11 },
+          splitLine: { show: false },
+        },
+        yAxis: {
+          type: 'value',
+          scale: true,
+          name: '均线价格',
+          nameTextStyle: { color: '#6b7280', fontSize: 11 },
+          axisLabel: { color: '#9ca3af', fontSize: 10, formatter: fmtPrice },
+          splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.06)' } },
+        },
+        dataZoom: [
+          { type: 'inside', start, end: 100 },
+          { type: 'slider', start, end: 100, height: 16, bottom: 2, borderColor: '#374151', backgroundColor: '#111827', fillerColor: 'rgba(250, 204, 21, 0.15)', handleStyle: { color: '#facc15' }, textStyle: { color: '#9ca3af' } },
+        ],
+        series: actualSeries.concat(predictedSeries),
+      }, true);
+      const rows = SERIES.map((series) => {
+        const result = results[series.key];
+        const count = result.errors.length;
+        const mae = count ? result.errors.reduce((sum, error) => sum + error, 0) / count : null;
+        const rmse = count ? Math.sqrt(result.errors.reduce((sum, error) => sum + error * error, 0) / count) : null;
+        const future = [n, n + 1, n + 2].map((index) =>
+          '<td><span class="forecast-value">' + fmtPrice(result.predicted[index]) + '</span></td>'
+        ).join('');
+        return '<tr>' +
+          '<td><span class="dot" style="background:' + series.color + '"></span>' + series.name + '</td>' +
+          '<td>' + fmtPrice(mae) + '</td>' +
+          '<td>' + fmtPrice(rmse) + '</td>' +
+          '<td>' + count + '</td>' +
+          future +
+          '</tr>';
+      });
+      $('compareStatsBody').innerHTML = rows.join('');
+    }
     function renderForecast(data) {
       const last = data.bars.length - 1;
       const closes = data.bars.map((bar) => bar.close);
@@ -678,6 +814,7 @@
       renderQuote(data);
       renderLatest(data);
       renderForecast(data);
+      renderCompare(data);
       renderKline(data, dates, closes, ohlc, volumes, start, end);
       charts.d1.setOption(
         derivativeOption('均线价格/' + data.unit, data.deriv, 'd1', dates, start, end, false),
