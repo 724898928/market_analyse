@@ -413,9 +413,7 @@
     <section class="panel">
       <div class="chart-head">
         <h2>短期预测 <span id="forecastUnit"></span></h2>
-        <li><strong>预测对比</strong>：以每个历史点的最新均线与一阶/二阶导数外推下一根K线，再与实际均线对比；黄色虚线为历史预测并延伸到未来 1 / 2 / 3 根，误差用 MAE / RMSE 汇总。</li>
-        <li><strong>历史成功率</strong>：每次加载行情时，将最近 120 根K线上可回测的 MA5 / MA10 / MA20 预测及实际结果写入 SQLite；成功率按“预测涨跌方向与实际一致”统计，并展示历史预测线、真实线与 MAE / RMSE。</li>
-        <span class="hint">黄色为预测值 · 基于最新均线与速度/加速度外推 · 仅供研究，不构成投资建议</span>
+        <span class="hint">黄色为预测值 · 均线动量 + 收盘价一致性阻尼 · 仅供研究，不构成投资建议</span>
       </div>
       <table>
         <thead>
@@ -430,12 +428,12 @@
     <section class="panel">
       <div class="chart-head">
         <h2>走势预测 vs 真实情况</h2>
-        <span class="hint">黄色虚线为历史一步预测并延伸至未来 · 竖线为当前K线 · 误差统计见下表</span>
+        <span class="hint">黄色虚线为历史一步预测，黄色圆点为未来预测并标注日期 · 竖线为当前K线</span>
       </div>
       <div id="compareChart" class="chart"></div>
       <table>
         <thead>
-          <tr><th>均线</th><th>一步预测MAE</th><th>RMSE</th><th>样本数</th><th>未来1根</th><th>未来2根</th><th>未来3根</th></tr>
+          <tr><th>均线</th><th>一步预测MAE</th><th>RMSE</th><th>样本数</th><th id="future1Head">未来1根</th><th id="future2Head">未来2根</th><th id="future3Head">未来3根</th></tr>
         </thead>
         <tbody id="compareStatsBody">
           <tr><td colspan="7" style="text-align:center;color:#6b7280">暂无数据</td></tr>
@@ -445,7 +443,7 @@
     <section class="panel">
       <div class="chart-head">
         <h2>历史预测成功率</h2>
-        <span class="hint">方向正确率 = 预测涨跌方向与实际一致的比例 · 预测记录保存在 SQLite · 黄色虚线为历史预测</span>
+        <span class="hint">方向正确率 = 预测涨跌方向与实际一致的比例 · 预测记录保存在 SQLite · 黄色圆点为未来预测</span>
       </div>
       <div class="history-summary">
         <span id="historyRate" class="big-rate">-</span>
@@ -468,6 +466,9 @@
         <li><strong>均线一阶导数 dMA/dt</strong>：先计算 MA5 / MA10 / MA20，再对均线序列求一阶导数；内部点使用非均匀时间步长的三点中心差分，首尾点使用四点前向 / 后向差分。均线不足窗口时不绘制对应导数。</li>
         <li><strong>均线二阶导数 d²MA/dt²</strong>：在均线序列上使用非均匀时间步长的二阶差分公式，刻画趋势的加速度；首尾点同样采用四点公式。</li>
         <li><strong>零线</strong>：白色虚线标记 0 值；纵轴按导数值自动缩放，仅在 0 落入数据范围时显示，避免压缩数据曲线。</li>
+        <li><strong>短期预测</strong>：预测值 = 当前均线 + 均线动量 × h × 阻尼系数；均线动量取最近一根K线的均线变化，收盘价与均线方向一致时阻尼为 1，否则为 0.3。h 为未来第 1 / 2 / 3 根的时间步长。</li>
+        <li><strong>预测对比</strong>：以每个历史点的均线动量与收盘价方向回测未来 1 / 2 / 3 根均线；黄色虚线为历史预测，黄色圆点标注未来日期的预测值，误差用 MAE / RMSE 汇总并与 K 线联动。</li>
+        <li><strong>历史成功率</strong>：每次加载行情时，将最近 120 根K线上可回测的 MA5 / MA10 / MA20 预测及实际结果写入 SQLite；成功率按“预测涨跌方向与实际一致”统计，并展示历史预测线、真实线与 MAE / RMSE。</li>
         <li><strong>时间变量</strong>：“真实时间间隔”以自然时间计算，休市、午休与节假日间隔计入其中；“交易时间”剔除休市，按交易分钟 / 交易日 / 周 / 月等间距计算；“K线序号”则每根K线为 1 个单位。</li>
         <li><strong>时间对齐</strong>：日 / 周 / 月K的历史时间戳对齐到收盘时刻；交易时段内的最后一根K线使用最新报价时间，避免用午夜时间低估实时变化率。</li>
         <li><strong>平滑窗口</strong>：默认 1 不额外平滑；大于 1 时先对 MA 均线再做简单移动平均，再计算导数，可进一步降低噪声，但会引入滞后。</li>
@@ -522,7 +523,7 @@
         compare: echarts.init($('compareChart')),
         history: echarts.init($('historyChart')),
       };
-      echarts.connect([charts.kline, charts.d1, charts.d2]);
+      echarts.connect([charts.kline, charts.d1, charts.d2, charts.compare, charts.history]);
       window.addEventListener('resize', () => {
         Object.values(charts).forEach((chart) => chart.resize());
       });
@@ -658,32 +659,115 @@
       return gaps[Math.floor(gaps.length / 2)];
     }
 
+    function dataGap(data, from, to) {
+      if (data.mode === 'index' || data.mode === 'trading') return to - from;
+      const divisor = data.unit === '分钟' ? 60 : 86400;
+      return (data.bars[to].t - data.bars[from].t) / 1000 / divisor;
+    }
+
+    function momentumChange(closes, ma, index, delta) {
+      if (index <= 0 || !Number.isFinite(ma[index]) || !Number.isFinite(ma[index - 1])) return null;
+      const maChange = ma[index] - ma[index - 1];
+      const closeChange = closes[index] - closes[index - 1];
+      const damping = maChange * closeChange > 0 ? 1 : 0.3;
+      return maChange * delta * damping;
+    }
+    function futureDates(data, count) {
+      const last = data.bars[data.bars.length - 1];
+      const period = String(data.period || '101');
+      const pad = (value) => String(value).padStart(2, '0');
+      const result = [];
+      if (['1', '5', '15', '30', '60'].includes(period)) {
+        const minutes = Number(period);
+        for (let i = 1; i <= count; i += 1) {
+          const date = new Date(last.t + minutes * 60000 * i);
+          result.push(date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+            ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()));
+        }
+        return result;
+      }
+      const parts = String(last.date || '').slice(0, 10).split('-').map(Number);
+      if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) {
+        for (let i = 1; i <= count; i += 1) result.push('预测+' + i);
+        return result;
+      }
+      let year = parts[0];
+      let month = parts[1] - 1;
+      let day = parts[2];
+      for (let i = 1; i <= count; i += 1) {
+        let cursor = new Date(Date.UTC(year, month, day));
+        if (period === '103') {
+          month += 1;
+          if (month > 11) { month = 0; year += 1; }
+          const maxDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+          day = Math.min(day, maxDay);
+        } else if (period === '102') {
+          cursor.setUTCDate(cursor.getUTCDate() + 7);
+          year = cursor.getUTCFullYear(); month = cursor.getUTCMonth(); day = cursor.getUTCDate();
+        } else {
+          do { cursor.setUTCDate(cursor.getUTCDate() + 1); } while (cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6);
+          year = cursor.getUTCFullYear(); month = cursor.getUTCMonth(); day = cursor.getUTCDate();
+        }
+        result.push(year + '-' + pad(month + 1) + '-' + pad(day));
+      }
+      return result;
+    }
+
+    function futurePointsSeries(data, results, lastIndex, labels) {
+      const points = [];
+      SERIES.forEach((series, seriesIndex) => {
+        for (let horizon = 1; horizon <= 3; horizon += 1) {
+          const value = results[series.key].predicted[lastIndex + horizon];
+          if (!Number.isFinite(value)) continue;
+          points.push({
+            name: series.name + ' ' + labels[horizon - 1],
+            value: [data.bars[lastIndex].date, value],
+            symbolOffset: [horizon * 26, (seriesIndex - 1) * 9],
+            itemStyle: { color: '#facc15' },
+            label: {
+              show: true,
+              formatter: String(labels[horizon - 1]).slice(-5),
+              position: 'top',
+              color: '#facc15',
+              fontSize: 10,
+            },
+          });
+        }
+      });
+      return {
+        name: '未来预测',
+        type: 'scatter',
+        symbolSize: 8,
+        data: points,
+        emphasis: { focus: 'series' },
+        z: 10,
+      };
+    }
     function compareSeries(data, series, step) {
       const n = data.bars.length;
       const closes = data.bars.map((bar) => bar.close);
       const ma = movingAverage(closes, series.window);
-      const d1 = data.deriv[series.key].d1;
-      const d2 = data.deriv[series.key].d2;
       const predicted = new Array(n + 3).fill(null);
       const errors = [];
       for (let i = 0; i < n - 1; i += 1) {
-        if (!Number.isFinite(ma[i]) || !Number.isFinite(ma[i + 1]) ||
-            !Number.isFinite(d1[i]) || !Number.isFinite(d2[i])) continue;
-        const value = ma[i] + d1[i] * step + 0.5 * d2[i] * step * step;
+        if (!Number.isFinite(ma[i]) || !Number.isFinite(ma[i + 1])) continue;
+        const change = momentumChange(closes, ma, i, dataGap(data, i, i + 1));
+        if (change == null) continue;
+        const value = ma[i] + change;
         predicted[i + 1] = value;
         errors.push(Math.abs(value - ma[i + 1]));
       }
       const last = n - 1;
-      if (Number.isFinite(ma[last]) && Number.isFinite(d1[last]) && Number.isFinite(d2[last])) {
+      if (Number.isFinite(ma[last])) {
         for (let h = 1; h <= 3; h += 1) {
-          const offset = h * step;
-          predicted[last + h] = ma[last] + d1[last] * offset + 0.5 * d2[last] * offset * offset;
+          const change = momentumChange(closes, ma, last, h * step);
+          if (change != null) predicted[last + h] = ma[last] + change;
         }
       }
       return { ma, predicted, errors };
     }
 
-    async function loadHistory(data) {
+    async function loadHistory(data, dates, start, end) {
       const seq = ++historySeq;
       const params = new URLSearchParams({
         symbol: data.symbol,
@@ -696,7 +780,7 @@
         const response = await fetch('/api/predictions?' + params.toString());
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const payload = await response.json();
-        if (seq === historySeq) renderHistory(payload);
+        if (seq === historySeq) renderHistory(payload, data, dates, start, end);
       } catch (error) {
         if (seq === historySeq) {
           $('historyRate').textContent = '-';
@@ -705,18 +789,24 @@
       }
     }
 
-    function renderHistory(payload) {
+    function renderHistory(payload, data, dates, start, end) {
       const rate = payload.success_rate == null ? '-' : payload.success_rate.toFixed(1) + '%';
       $('historyRate').textContent = rate;
       $('historySummary').textContent =
         '已评估 ' + payload.evaluated + ' / ' + payload.total + ' 条 · 方向成功 ' + payload.successes +
         ' 条 · MAE ' + fmtPrice(payload.mae) + ' · RMSE ' + fmtPrice(payload.rmse);
       const points = payload.points || [];
-      const dates = points.map((point) => point.date);
+      const byDate = new Map(points.map((point) => [point.date, point]));
+      const aligned = dates.map((date) => byDate.get(date) || null);
+      const step = forecastStep(data);
+      const futureLabels = futureDates(data, 3);
+      const futureResults = {};
+      SERIES.forEach((series) => { futureResults[series.key] = compareSeries(data, series, step); });
+      const futureSeries = futurePointsSeries(data, futureResults, data.bars.length - 1, futureLabels);
       const actualSeries = SERIES.map((series) => ({
         name: series.name + ' 实际',
         type: 'line',
-        data: points.map((point) => point[series.key + '_actual']),
+        data: aligned.map((point) => point ? point[series.key + '_actual'] : null),
         showSymbol: false,
         smooth: false,
         lineStyle: { width: 1.6, color: series.color },
@@ -725,7 +815,7 @@
       const predictedSeries = SERIES.map((series) => ({
         name: series.name + ' 预测',
         type: 'line',
-        data: points.map((point) => point[series.key + '_pred']),
+        data: aligned.map((point) => point ? point[series.key + '_pred'] : null),
         showSymbol: false,
         smooth: false,
         lineStyle: { width: 1.4, color: '#facc15', type: 'dashed', opacity: 0.95 },
@@ -735,7 +825,7 @@
         animation: false,
         backgroundColor: 'transparent',
         legend: {
-          data: actualSeries.concat(predictedSeries).map((series) => series.name),
+          data: actualSeries.concat(predictedSeries, [futureSeries]).map((series) => series.name),
           top: 0,
           textStyle: { color: '#9ca3af' },
           itemWidth: 14,
@@ -749,7 +839,7 @@
           textStyle: { color: '#e5e7eb' },
           valueFormatter: fmtPrice,
         },
-        grid: { left: 76, right: 24, top: 54, bottom: 60 },
+        grid: { left: 76, right: 110, top: 54, bottom: 60 },
         xAxis: {
           type: 'category',
           data: dates,
@@ -768,10 +858,10 @@
           splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.06)' } },
         },
         dataZoom: [
-          { type: 'inside', start: 0, end: 100 },
-          { type: 'slider', start: 0, end: 100, height: 16, bottom: 2, borderColor: '#374151', backgroundColor: '#111827', fillerColor: 'rgba(250, 204, 21, 0.15)', handleStyle: { color: '#facc15' }, textStyle: { color: '#9ca3af' } },
+          { type: 'inside', start, end },
+          { type: 'slider', start, end, height: 16, bottom: 2, borderColor: '#374151', backgroundColor: '#111827', fillerColor: 'rgba(250, 204, 21, 0.15)', handleStyle: { color: '#facc15' }, textStyle: { color: '#9ca3af' } },
         ],
-        series: actualSeries.concat(predictedSeries),
+        series: actualSeries.concat(predictedSeries, [futureSeries]),
       }, true);
       const rows = [];
       const appendRows = (groups) => {
@@ -790,17 +880,19 @@
       $('historyStatsBody').innerHTML = rows.join('') ||
         '<tr><td colspan="5" style="text-align:center;color:#6b7280">暂无历史记录</td></tr>';
     }
-    function renderCompare(data) {
+    function renderCompare(data, dates, start, end) {
       const n = data.bars.length;
       const step = forecastStep(data);
-      const dates = data.bars.map((bar) => bar.date).concat(['预测+1', '预测+2', '预测+3']);
       const results = {};
       SERIES.forEach((series) => { results[series.key] = compareSeries(data, series, step); });
-      const start = defaultStart(n);
+      const futureLabels = futureDates(data, 3);      ['future1Head', 'future2Head', 'future3Head'].forEach((id, index) => {
+        const element = $(id);
+        if (element) element.textContent = futureLabels[index];
+      });
       const actualSeries = SERIES.map((series, index) => ({
         name: series.name + ' 实际',
         type: 'line',
-        data: results[series.key].ma.concat([null, null, null]),
+        data: results[series.key].ma,
         showSymbol: false,
         smooth: false,
         lineStyle: { width: 1.6, color: series.color },
@@ -817,17 +909,18 @@
       const predictedSeries = SERIES.map((series) => ({
         name: series.name + ' 预测',
         type: 'line',
-        data: results[series.key].predicted,
+        data: results[series.key].predicted.slice(0, n),
         showSymbol: false,
         smooth: false,
         lineStyle: { width: 1.4, color: '#facc15', type: 'dashed', opacity: 0.95 },
         emphasis: { focus: 'series' },
       }));
+      const futureSeries = futurePointsSeries(data, results, n - 1, futureLabels);
       charts.compare.setOption({
         animation: false,
         backgroundColor: 'transparent',
         legend: {
-          data: actualSeries.concat(predictedSeries).map((series) => series.name),
+          data: actualSeries.concat(predictedSeries, [futureSeries]).map((series) => series.name),
           top: 0,
           textStyle: { color: '#9ca3af' },
           itemWidth: 14,
@@ -841,7 +934,7 @@
           textStyle: { color: '#e5e7eb' },
           valueFormatter: fmtPrice,
         },
-        grid: { left: 76, right: 24, top: 54, bottom: 60 },
+        grid: { left: 76, right: 110, top: 54, bottom: 60 },
         xAxis: {
           type: 'category',
           data: dates,
@@ -860,10 +953,10 @@
           splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.06)' } },
         },
         dataZoom: [
-          { type: 'inside', start, end: 100 },
-          { type: 'slider', start, end: 100, height: 16, bottom: 2, borderColor: '#374151', backgroundColor: '#111827', fillerColor: 'rgba(250, 204, 21, 0.15)', handleStyle: { color: '#facc15' }, textStyle: { color: '#9ca3af' } },
+          { type: 'inside', start, end },
+          { type: 'slider', start, end, height: 16, bottom: 2, borderColor: '#374151', backgroundColor: '#111827', fillerColor: 'rgba(250, 204, 21, 0.15)', handleStyle: { color: '#facc15' }, textStyle: { color: '#9ca3af' } },
         ],
-        series: actualSeries.concat(predictedSeries),
+        series: actualSeries.concat(predictedSeries, [futureSeries]),
       }, true);
       const rows = SERIES.map((series) => {
         const result = results[series.key];
@@ -888,10 +981,9 @@
       const closes = data.bars.map((bar) => bar.close);
       const step = forecastStep(data);
       const rows = SERIES.map((series) => {
-        const current = movingAverage(closes, series.window)[last];
-        const d1 = data.deriv[series.key].d1[last];
-        const d2 = data.deriv[series.key].d2[last];
-        if (!Number.isFinite(current) || !Number.isFinite(d1) || !Number.isFinite(d2)) {
+        const ma = movingAverage(closes, series.window);
+        const current = ma[last];
+        if (!Number.isFinite(current)) {
           return '<tr>' +
             '<td><span class="dot" style="background:' + series.color + '"></span>' + series.name + '</td>' +
             '<td>' + fmtPrice(current) + '</td>' +
@@ -900,9 +992,17 @@
             '</tr>';
         }
         const values = [1, 2, 3].map((horizon) => {
-          const h = horizon * step;
-          return current + d1 * h + 0.5 * d2 * h * h;
+          const change = momentumChange(closes, ma, last, horizon * step);
+          return change == null ? null : current + change;
         });
+        if (values.some((value) => !Number.isFinite(value))) {
+          return '<tr>' +
+            '<td><span class="dot" style="background:' + series.color + '"></span>' + series.name + '</td>' +
+            '<td>' + fmtPrice(current) + '</td>' +
+            '<td colspan="3" style="text-align:center;color:#6b7280">数据不足</td>' +
+            '<td>-</td>' +
+            '</tr>';
+        }
         const change = values[0] - current;
         const trendClass = change > 1e-9 ? 'forecast-up' : (change < -1e-9 ? 'forecast-down' : 'forecast-flat');
         const trendText = change > 1e-9 ? '▲ 上行' : (change < -1e-9 ? '▼ 下行' : '→ 持平');
@@ -951,8 +1051,8 @@
       renderQuote(data);
       renderLatest(data);
       renderForecast(data);
-      renderCompare(data);
-      loadHistory(data);
+      renderCompare(data, dates, start, end);
+      loadHistory(data, dates, start, end);
       renderKline(data, dates, closes, ohlc, volumes, start, end);
       charts.d1.setOption(
         derivativeOption('均线价格/' + data.unit, data.deriv, 'd1', dates, start, end, false),

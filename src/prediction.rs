@@ -6,7 +6,7 @@ use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
-use crate::deriv::{derivatives, moving_average};
+use crate::deriv::moving_average;
 use crate::market::KlineBar;
 
 const DB_ENV: &str = "PREDICTION_DB";
@@ -133,24 +133,23 @@ fn success_of(base: f64, predicted: f64, actual: f64) -> i64 {
     }
 }
 
-fn causal_derivative(x_axis: &[f64], ma: &[Option<f64>], index: usize) -> Option<(f64, f64)> {
-    let start = index.saturating_sub(3);
-    let mut xs = Vec::new();
-    let mut ys = Vec::new();
-    for i in start..=index {
-        if let Some(value) = ma[i]
-            && value.is_finite()
-        {
-            xs.push(x_axis[i]);
-            ys.push(value);
-        }
-    }
-    if ys.len() < 2 {
+fn causal_change(bars: &[KlineBar], ma: &[Option<f64>], index: usize, delta: f64) -> Option<f64> {
+    if index == 0 {
         return None;
     }
-    let pairs = derivatives(&xs, &ys).ok()?;
-    let pair = *pairs.last()?;
-    Some((pair.first, pair.second))
+    let current = ma[index]?;
+    let previous = ma[index - 1]?;
+    if !current.is_finite() || !previous.is_finite() {
+        return None;
+    }
+    let ma_change = current - previous;
+    let close_change = bars[index].close - bars[index - 1].close;
+    let damping = if ma_change * close_change > 0.0 {
+        1.0
+    } else {
+        0.3
+    };
+    Some(ma_change * delta * damping)
 }
 
 pub fn record_predictions(
@@ -207,11 +206,6 @@ pub fn record_predictions(
                     continue;
                 }
                 let base_value = base_value.unwrap();
-                let (first, second) = match causal_derivative(x_axis, &mas[series_index], index) {
-                    Some(pair) => pair,
-                    None => continue,
-                };
-
                 for horizon in 1..=3i64 {
                     let target_index = index + horizon as usize;
                     let (delta, target_time, target_date, actual) = if target_index < bars.len() {
@@ -229,7 +223,11 @@ pub fn record_predictions(
                     if !delta.is_finite() {
                         continue;
                     }
-                    let predicted = base_value + first * delta + 0.5 * second * delta * delta;
+                    let change = match causal_change(bars, &mas[series_index], index, delta) {
+                        Some(value) => value,
+                        None => continue,
+                    };
+                    let predicted = base_value + change;
                     if !predicted.is_finite() {
                         continue;
                     }
