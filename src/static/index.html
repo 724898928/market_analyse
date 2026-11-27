@@ -715,6 +715,7 @@
 
     function futurePointsSeries(data, results, lastIndex, labels) {
       const points = [];
+      const symbols = ['circle', 'diamond', 'triangle'];
       SERIES.forEach((series, seriesIndex) => {
         for (let horizon = 1; horizon <= 3; horizon += 1) {
           const value = results[series.key].predicted[lastIndex + horizon];
@@ -722,14 +723,20 @@
           points.push({
             name: series.name + ' ' + labels[horizon - 1],
             value: [data.bars[lastIndex].date, value],
-            symbolOffset: [horizon * 26, (seriesIndex - 1) * 9],
-            itemStyle: { color: '#facc15' },
+            symbol: symbols[seriesIndex],
+            symbolSize: 10,
+            symbolOffset: [horizon * 60, (seriesIndex - 1) * 28],
+            itemStyle: { color: '#facc15', borderColor: '#111827', borderWidth: 1 },
             label: {
               show: true,
-              formatter: String(labels[horizon - 1]).slice(-5),
-              position: 'top',
+              formatter: series.name + ' ' + String(labels[horizon - 1]).slice(5),
+              position: 'right',
+              distance: 6,
               color: '#facc15',
               fontSize: 10,
+              backgroundColor: 'rgba(17, 24, 39, 0.85)',
+              padding: [2, 4],
+              borderRadius: 3,
             },
           });
         }
@@ -737,9 +744,8 @@
       return {
         name: '未来预测',
         type: 'scatter',
-        symbolSize: 8,
         data: points,
-        emphasis: { focus: 'series' },
+        emphasis: { focus: 'series', scale: 1.4 },
         z: 10,
       };
     }
@@ -839,7 +845,7 @@
           textStyle: { color: '#e5e7eb' },
           valueFormatter: fmtPrice,
         },
-        grid: { left: 76, right: 110, top: 54, bottom: 60 },
+        grid: { left: 76, right: 240, top: 54, bottom: 60 },
         xAxis: {
           type: 'category',
           data: dates,
@@ -934,7 +940,7 @@
           textStyle: { color: '#e5e7eb' },
           valueFormatter: fmtPrice,
         },
-        grid: { left: 76, right: 110, top: 54, bottom: 60 },
+        grid: { left: 76, right: 240, top: 54, bottom: 60 },
         xAxis: {
           type: 'category',
           data: dates,
