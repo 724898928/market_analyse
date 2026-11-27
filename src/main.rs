@@ -1,5 +1,6 @@
 mod deriv;
 mod market;
+mod prediction;
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -55,6 +56,7 @@ async fn main() {
         .route("/api/kline", get(api_kline))
         .route("/api/quote", get(api_quote))
         .route("/api/leaders", get(api_leaders))
+        .route("/api/predictions", get(api_predictions))
         .with_state(AppState { http });
 
     let port = std::env::var("PORT")
@@ -116,6 +118,15 @@ struct LeadersQuery {
     page: Option<usize>,
     page_size: Option<usize>,
     industry: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PredictionQuery {
+    symbol: Option<String>,
+    period: Option<String>,
+    source: Option<String>,
+    mode: Option<String>,
+    limit: Option<usize>,
 }
 
 enum ApiError {
@@ -303,6 +314,29 @@ async fn api_leaders(
         .map_err(ApiError::Upstream)
 }
 
+async fn api_predictions(
+    Query(query): Query<PredictionQuery>,
+) -> Result<Json<prediction::PredictionHistory>, ApiError> {
+    let symbol = query
+        .symbol
+        .unwrap_or_else(|| "sh600000".to_string())
+        .trim()
+        .to_string();
+    if symbol.is_empty() {
+        return Err(ApiError::BadRequest("请输入股票代码".to_string()));
+    }
+    let limit = query.limit.unwrap_or(120).clamp(10, 500);
+    prediction::history(
+        &symbol,
+        query.period.as_deref(),
+        query.source.as_deref(),
+        query.mode.as_deref(),
+        limit,
+    )
+    .map(Json)
+    .map_err(ApiError::Upstream)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_response(
     symbol: String,
@@ -381,6 +415,19 @@ fn build_response(
         ma10: series(10)?,
         ma20: series(20)?,
     };
+
+    let series_data = [("ma5", 5usize), ("ma10", 10usize), ("ma20", 20usize)];
+    if !symbol.eq_ignore_ascii_case("demo") {
+        let _ = prediction::record_predictions(
+            &symbol,
+            period.klt(),
+            source,
+            mode,
+            &bars,
+            &x_axis,
+            &series_data,
+        );
+    }
 
     let out_bars = bars
         .into_iter()

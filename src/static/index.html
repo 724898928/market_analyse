@@ -112,6 +112,14 @@
     .chart { width: 100%; height: 440px; }
     #d1Chart, #d2Chart { height: 300px; }
     #compareChart { height: 360px; }
+    .big-rate {
+      color: #facc15;
+      font-size: 32px;
+      font-weight: 800;
+      text-shadow: 0 0 12px rgba(250, 204, 21, 0.35);
+    }
+    #historyChart { height: 360px; }
+    .history-summary { display: flex; align-items: baseline; gap: 16px; margin: 6px 0 8px; }
     .quote { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 30px; }
     .quote-name { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; }
     .tag {
@@ -406,6 +414,7 @@
       <div class="chart-head">
         <h2>短期预测 <span id="forecastUnit"></span></h2>
         <li><strong>预测对比</strong>：以每个历史点的最新均线与一阶/二阶导数外推下一根K线，再与实际均线对比；黄色虚线为历史预测并延伸到未来 1 / 2 / 3 根，误差用 MAE / RMSE 汇总。</li>
+        <li><strong>历史成功率</strong>：每次加载行情时，将最近 120 根K线上可回测的 MA5 / MA10 / MA20 预测及实际结果写入 SQLite；成功率按“预测涨跌方向与实际一致”统计，并展示历史预测线、真实线与 MAE / RMSE。</li>
         <span class="hint">黄色为预测值 · 基于最新均线与速度/加速度外推 · 仅供研究，不构成投资建议</span>
       </div>
       <table>
@@ -430,6 +439,25 @@
         </thead>
         <tbody id="compareStatsBody">
           <tr><td colspan="7" style="text-align:center;color:#6b7280">暂无数据</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="panel">
+      <div class="chart-head">
+        <h2>历史预测成功率</h2>
+        <span class="hint">方向正确率 = 预测涨跌方向与实际一致的比例 · 预测记录保存在 SQLite · 黄色虚线为历史预测</span>
+      </div>
+      <div class="history-summary">
+        <span id="historyRate" class="big-rate">-</span>
+        <span id="historySummary" class="hint">正在加载历史统计…</span>
+      </div>
+      <div id="historyChart" class="chart"></div>
+      <table>
+        <thead>
+          <tr><th>统计维度</th><th>样本数</th><th>成功数</th><th>成功率</th><th>MAE</th></tr>
+        </thead>
+        <tbody id="historyStatsBody">
+          <tr><td colspan="5" style="text-align:center;color:#6b7280">暂无数据</td></tr>
         </tbody>
       </table>
     </section>
@@ -468,6 +496,7 @@
     let autoTimer = null;
     let hasData = false;
     let lastZoomKey = '';
+    let historySeq = 0;
     let lastZoom = null;
     const leadersState = {
       page: 1,
@@ -491,6 +520,7 @@
         d1: echarts.init($('d1Chart')),
         d2: echarts.init($('d2Chart')),
         compare: echarts.init($('compareChart')),
+        history: echarts.init($('historyChart')),
       };
       echarts.connect([charts.kline, charts.d1, charts.d2]);
       window.addEventListener('resize', () => {
@@ -653,6 +683,113 @@
       return { ma, predicted, errors };
     }
 
+    async function loadHistory(data) {
+      const seq = ++historySeq;
+      const params = new URLSearchParams({
+        symbol: data.symbol,
+        period: data.period,
+        source: data.source,
+        mode: data.mode,
+        limit: '160',
+      });
+      try {
+        const response = await fetch('/api/predictions?' + params.toString());
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const payload = await response.json();
+        if (seq === historySeq) renderHistory(payload);
+      } catch (error) {
+        if (seq === historySeq) {
+          $('historyRate').textContent = '-';
+          $('historySummary').textContent = '历史统计加载失败：' + error.message;
+        }
+      }
+    }
+
+    function renderHistory(payload) {
+      const rate = payload.success_rate == null ? '-' : payload.success_rate.toFixed(1) + '%';
+      $('historyRate').textContent = rate;
+      $('historySummary').textContent =
+        '已评估 ' + payload.evaluated + ' / ' + payload.total + ' 条 · 方向成功 ' + payload.successes +
+        ' 条 · MAE ' + fmtPrice(payload.mae) + ' · RMSE ' + fmtPrice(payload.rmse);
+      const points = payload.points || [];
+      const dates = points.map((point) => point.date);
+      const actualSeries = SERIES.map((series) => ({
+        name: series.name + ' 实际',
+        type: 'line',
+        data: points.map((point) => point[series.key + '_actual']),
+        showSymbol: false,
+        smooth: false,
+        lineStyle: { width: 1.6, color: series.color },
+        emphasis: { focus: 'series' },
+      }));
+      const predictedSeries = SERIES.map((series) => ({
+        name: series.name + ' 预测',
+        type: 'line',
+        data: points.map((point) => point[series.key + '_pred']),
+        showSymbol: false,
+        smooth: false,
+        lineStyle: { width: 1.4, color: '#facc15', type: 'dashed', opacity: 0.95 },
+        emphasis: { focus: 'series' },
+      }));
+      charts.history.setOption({
+        animation: false,
+        backgroundColor: 'transparent',
+        legend: {
+          data: actualSeries.concat(predictedSeries).map((series) => series.name),
+          top: 0,
+          textStyle: { color: '#9ca3af' },
+          itemWidth: 14,
+          itemHeight: 8,
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross', label: { backgroundColor: '#1f2937' } },
+          backgroundColor: 'rgba(17, 24, 39, 0.95)',
+          borderColor: '#374151',
+          textStyle: { color: '#e5e7eb' },
+          valueFormatter: fmtPrice,
+        },
+        grid: { left: 76, right: 24, top: 54, bottom: 60 },
+        xAxis: {
+          type: 'category',
+          data: dates,
+          boundaryGap: false,
+          axisLine: { lineStyle: { color: '#374151' } },
+          axisTick: { show: false },
+          axisLabel: { color: '#9ca3af', fontSize: 11 },
+          splitLine: { show: false },
+        },
+        yAxis: {
+          type: 'value',
+          scale: true,
+          name: '均线价格',
+          nameTextStyle: { color: '#6b7280', fontSize: 11 },
+          axisLabel: { color: '#9ca3af', fontSize: 10, formatter: fmtPrice },
+          splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.06)' } },
+        },
+        dataZoom: [
+          { type: 'inside', start: 0, end: 100 },
+          { type: 'slider', start: 0, end: 100, height: 16, bottom: 2, borderColor: '#374151', backgroundColor: '#111827', fillerColor: 'rgba(250, 204, 21, 0.15)', handleStyle: { color: '#facc15' }, textStyle: { color: '#9ca3af' } },
+        ],
+        series: actualSeries.concat(predictedSeries),
+      }, true);
+      const rows = [];
+      const appendRows = (groups) => {
+        (groups || []).forEach((group) => {
+          rows.push('<tr>' +
+            '<td>' + group.name + '</td>' +
+            '<td>' + group.evaluated + '</td>' +
+            '<td>' + group.successes + '</td>' +
+            '<td>' + (group.success_rate == null ? '-' : group.success_rate.toFixed(1) + '%') + '</td>' +
+            '<td>' + fmtPrice(group.mae) + '</td>' +
+            '</tr>');
+        });
+      };
+      appendRows(payload.by_series);
+      appendRows(payload.by_horizon);
+      $('historyStatsBody').innerHTML = rows.join('') ||
+        '<tr><td colspan="5" style="text-align:center;color:#6b7280">暂无历史记录</td></tr>';
+    }
     function renderCompare(data) {
       const n = data.bars.length;
       const step = forecastStep(data);
@@ -815,6 +952,7 @@
       renderLatest(data);
       renderForecast(data);
       renderCompare(data);
+      loadHistory(data);
       renderKline(data, dates, closes, ohlc, volumes, start, end);
       charts.d1.setOption(
         derivativeOption('均线价格/' + data.unit, data.deriv, 'd1', dates, start, end, false),
