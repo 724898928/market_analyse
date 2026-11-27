@@ -97,9 +97,8 @@ pub fn derivatives(x: &[f64], y: &[f64]) -> Result<Vec<DerivativePair>, String> 
         out[0].second = dot(&second_weights, &y[..4]);
 
         let start = n - 4;
-        let first_weights = finite_difference_weights(&x[start..], x[n - 1], 1);
         let second_weights = finite_difference_weights(&x[start..], x[n - 1], 2);
-        out[n - 1].first = dot(&first_weights, &y[start..]);
+        out[n - 1].first = (y[n - 1] - y[n - 2]) / (x[n - 1] - x[n - 2]);
         out[n - 1].second = dot(&second_weights, &y[start..]);
     } else {
         let h1 = x[1] - x[0];
@@ -120,8 +119,7 @@ pub fn derivatives(x: &[f64], y: &[f64]) -> Result<Vec<DerivativePair>, String> 
         let ym = y[i - 1];
         let yb = y[i - 2];
 
-        out[i].first = (2.0 * h1 + h2) * yl / (h1 * (h1 + h2)) - (h1 + h2) * ym / (h1 * h2)
-            + h1 * yb / (h2 * (h1 + h2));
+        out[i].first = (yl - ym) / h1;
         out[i].second =
             2.0 * yl / (h1 * (h1 + h2)) - 2.0 * ym / (h1 * h2) + 2.0 * yb / (h2 * (h1 + h2));
     }
@@ -245,7 +243,12 @@ mod tests {
         let y: Vec<f64> = x.iter().map(|v| v * v).collect();
         let result = derivatives(&x, &y).unwrap();
         for (i, pair) in result.iter().enumerate() {
-            assert_close(pair.first, 2.0 * i as f64);
+            let expected_first = if i == result.len() - 1 {
+                (y[i] - y[i - 1]) / (x[i] - x[i - 1])
+            } else {
+                2.0 * i as f64
+            };
+            assert_close(pair.first, expected_first);
             assert_close(pair.second, 2.0);
         }
     }
@@ -256,7 +259,12 @@ mod tests {
         let y: Vec<f64> = x.iter().map(|v| v * v).collect();
         let result = derivatives(&x, &y).unwrap();
         for (i, pair) in result.iter().enumerate() {
-            assert_close(pair.first, 2.0 * x[i]);
+            let expected_first = if i == result.len() - 1 {
+                (y[i] - y[i - 1]) / (x[i] - x[i - 1])
+            } else {
+                2.0 * x[i]
+            };
+            assert_close(pair.first, expected_first);
             assert_close(pair.second, 2.0);
         }
     }
@@ -295,7 +303,12 @@ mod tests {
         let result = derivatives(&x, &y).unwrap();
 
         for i in [0, x.len() - 1] {
-            assert_close(result[i].first, 3.0 * x[i].powi(2) - 4.0 * x[i] + 3.0);
+            let expected_first = if i == 0 {
+                3.0 * x[i].powi(2) - 4.0 * x[i] + 3.0
+            } else {
+                (y[i] - y[i - 1]) / (x[i] - x[i - 1])
+            };
+            assert_close(result[i].first, expected_first);
             assert_close(result[i].second, 6.0 * x[i] - 4.0);
         }
     }
@@ -360,6 +373,6 @@ mod tests {
         assert!(result[1].is_none());
         assert_close(result[2].unwrap().first, 4.0);
         assert_close(result[2].unwrap().second, 2.0);
-        assert_close(result[4].unwrap().first, 8.0);
+        assert_close(result[4].unwrap().first, 7.0);
     }
 }

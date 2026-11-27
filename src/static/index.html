@@ -146,13 +146,13 @@
       font-size: 14px;
       text-shadow: 0 0 10px rgba(250, 204, 21, 0.35);
     }
-    .forecast-up { color: #f87171; }
-    .forecast-down { color: #34d399; }
+    .forecast-up { color: #ef4444; }
+    .forecast-down { color: #22c55e; }
     .forecast-flat { color: #9ca3af; }
     .note ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.9; }
     .note h2 { margin: 0; font-size: 15px; }
     .note strong { color: #cbd5e1; font-weight: 600; }
-    .hidden { display: none; }
+    .hidden { display: none !important; }
     .tt-title { font-weight: 600; margin-bottom: 4px; }
     .tt-row { color: #cbd5e1; font-size: 12px; line-height: 1.6; }
     .leaders-head {
@@ -182,6 +182,12 @@
     .leaders-actions input#watchSymbol { max-width: 240px; }
     .leaders-actions input#watchName { max-width: 150px; }
     .watch-remove { height: 26px; padding: 0 10px; font-size: 12px; }
+    .task-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0 10px; }
+    .task-toolbar select { height: 30px; padding: 0 8px; font-size: 12px; }
+    .task-table th, .task-table td { padding: 8px 10px; }
+    .task-signal { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .task-name, .task-price { display: flex; flex-direction: column; gap: 2px; }
+    .task-name small, .task-price small { color: #6b7280; font-size: 11px; }
     .view-switch {
       display: inline-flex;
       border: 1px solid #2b3a52;
@@ -338,13 +344,14 @@
       </div>
     </details>
 
-    <section class="panel">
-      <div class="leaders-head">
+    <details class="panel leaders-panel" open>
+      <summary class="leaders-head">
         <h2>每日龙头股 <span id="leadersDate"></span></h2>
         <div class="leaders-actions">
           <div class="view-switch">
             <button id="viewList" class="view-btn active" type="button">个股列表</button>
             <button id="viewIndustry" class="view-btn" type="button">行业统计</button>
+            <button id="viewTask" class="view-btn" type="button">任务筛选</button>
           </div>
           <select id="leadersIndustry" title="按行业筛选">
             <option value="">全部行业</option>
@@ -356,7 +363,7 @@
           </select>
           <button id="leadersRefresh" class="ghost" type="button">刷新</button>
         </div>
-      </div>
+      </summary>
       <div id="leadersSummary" class="hint leaders-summary">按连板数排序 · 点击行查看K线</div>
       <div id="leadersListWrap" class="leaders-table-wrap">
         <table>
@@ -403,7 +410,29 @@
           </tbody>
         </table>
       </div>
-    </section>
+      <div id="leadersTaskWrap" class="leaders-table-wrap hidden">
+        <div class="task-toolbar">
+          <select id="taskPageSize" title="任务筛选每页数量">
+            <option value="10" selected>每页 10 条</option>
+            <option value="20">每页 20 条</option>
+            <option value="30">每页 30 条</option>
+          </select>
+          <span id="taskCount" class="hint"></span>
+        </div>
+        <table class="task-table">
+          <thead>
+            <tr><th>代码</th><th>名称 / 行业</th><th>现价 / 涨跌</th><th>连板</th><th>MA5</th><th>MA10</th><th>MA20</th></tr>
+          </thead>
+          <tbody id="taskBody">
+            <tr><td colspan="7" class="table-empty">切换到任务筛选后自动加载…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="taskPagination" class="pagination hidden">
+        <span id="taskPageInfo" class="page-info"></span>
+        <div id="taskPages"></div>
+      </div>
+    </details>
 
     <section class="panel">
       <div id="status" class="status">准备加载行情数据…</div>
@@ -498,7 +527,7 @@
       <h2>计算说明</h2>
       <ul>
         <li><strong>MA5 / MA10 / MA20</strong>：分别为最近 5 / 10 / 20 根K线收盘价的简单移动平均线（MA = Moving Average），日K下即 5 / 10 / 20 日均线，颜色依次为橙 / 紫 / 蓝；不足对应根数时不绘制，用于观察短、中、长期均线趋势与金叉死叉。</li>
-        <li><strong>均线一阶导数 dMA/dt</strong>：先计算 MA5 / MA10 / MA20，再对均线序列求一阶导数；内部点使用非均匀时间步长的三点中心差分，首尾点使用四点前向 / 后向差分。均线不足窗口时不绘制对应导数。</li>
+        <li><strong>均线一阶导数 dMA/dt</strong>：先计算 MA5 / MA10 / MA20，再对均线序列求一阶导数；内部点使用非均匀时间步长的三点中心差分，最新点醇用最近一根K线的均线变化，方向与最新走势一致；其余端点使用四点差分。均线不足窗口时不绘制对应导数。</li>
         <li><strong>均线二阶导数 d²MA/dt²</strong>：在均线序列上使用非均匀时间步长的二阶差分公式，刻画趋势的加速度；首尾点同样采用四点公式。</li>
         <li><strong>零线</strong>：白色虚线标记 0 值；纵轴按导数值自动缩放，仅在 0 落入数据范围时显示，避免压缩数据曲线。</li>
         <li><strong>短期预测</strong>：预测值 = 当前均线 + 均线动量 × h × 阻尼系数；均线动量取最近一根K线的均线变化，收盘价与均线方向一致时阻尼为 1，否则为 0.3。h 为未来第 1 / 2 / 3 根的时间步长。</li>
@@ -511,6 +540,7 @@
         <li><strong>复权</strong>：A股日 / 周 / 月K支持前复权与后复权；分钟K线以及港股、美股仅提供不复权数据，状态栏会提示实际复权方式。</li>
         <li><strong>数据源</strong>：可选富途牛牛、腾讯行情、东方财富备用通道；自动模式在配置富途 Token 后优先使用富途，失败时依次回退腾讯与东方财富。</li>
         <li><strong>每日龙头股</strong>：取东方财富涨停板池，按连板数从高到低排序并分页展示；"行业统计"按行业聚合涨停数、占比、连板、封单与成交额，点击行业可筛选个股，点击个股可加载K线。数据仅供学习研究，不构成投资建议。</li>
+        <li><strong>任务筛选</strong>：在「每日龙头股」面板中切换到「任务筛选」，按最近均线动量筛选 MA5 上行、MA10 下行、MA20 下行的股票，并展示短期预测方向与数值。</li>
         <li><strong>富途牛牛</strong>：需设置环境变量 <code>FUTU_ACCESS_TOKEN</code>（或 <code>FUTU_TOKEN</code>）为 OAuth access_token，具备 <code>quote:read</code> 权限；未配置时选择“富途牛牛”会返回错误。仅用于学习研究，不构成任何投资建议。</li>
       </ul>
     </section>
@@ -543,6 +573,11 @@
       view: 'list',
       industry: '',
       data: null,
+      taskLoading: false,
+      taskData: null,
+      taskPage: 1,
+      taskPageSize: 10,
+      taskItems: [],
     };
 
     function ensureCharts() {
@@ -1505,6 +1540,14 @@
     }
 
     function updateLeadersSummary() {
+      if (leadersState.view === 'task') {
+        const task = leadersState.taskData;
+        $('leadersSummary').textContent = task
+          ? ('任务筛选：MA5 上行 / MA10 下行 / MA20 下行 · 命中 ' + task.matched +
+            ' / ' + task.total + ' 只 · 点击行查看K线')
+          : '任务筛选：MA5 上行 / MA10 下行 / MA20 下行';
+        return;
+      }
       const data = leadersState.data;
       if (!data) {
         $('leadersSummary').textContent = '按连板数排序 · 点击行查看K线';
@@ -1522,14 +1565,114 @@
         filter + ' · 覆盖 ' + industries.length + ' 个行业 · 按连板数排序 · 点击行查看K线';
     }
 
+    async function loadTask() {
+      if (leadersState.taskLoading) return;
+      leadersState.taskLoading = true;
+      const body = $('taskBody');
+      body.innerHTML = '<tr><td colspan="7" class="table-empty">正在筛选任务股…</td></tr>';
+      $('leadersRefresh').disabled = true;
+      try {
+        const response = await fetch('/api/task');
+        let data;
+        try { data = await response.json(); } catch (error) { throw new Error('服务返回了无法解析的响应'); }
+        if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+        leadersState.taskData = data;
+        leadersState.taskPage = 1;
+        renderTask();
+        updateLeadersSummary();
+      } catch (error) {
+        body.innerHTML = '<tr><td colspan="7" class="table-empty error">任务筛选失败：' +
+          escapeHtml(error.message) + '</td></tr>';
+        $('leadersSummary').textContent = '任务筛选失败 · 可点击刷新重试';
+      } finally {
+        leadersState.taskLoading = false;
+        $('leadersRefresh').disabled = false;
+      }
+    }
+
+    function taskCell(signal) {
+      if (!signal) return '-';
+      const className = signal.direction === '上行' ? 'forecast-up' :
+        (signal.direction === '下行' ? 'forecast-down' : 'forecast-flat');
+      return '<span class="task-signal ' + className + '">' + escapeHtml(signal.direction) +
+        ' ' + fmtPrice(signal.predicted) + '</span>';
+    }
+
+    function renderTask() {
+      const data = leadersState.taskData;
+      const body = $('taskBody');
+      const items = (data && data.items) || [];
+      leadersState.taskItems = items;
+      $('taskCount').textContent = '命中 ' + items.length + ' / ' + (data ? data.total : 0) + ' 只';
+      if (!items.length) {
+        body.innerHTML = '<tr><td colspan="7" class="table-empty">当前没有同时满足 MA5 上行、MA10 下行、MA20 下行的股票</td></tr>';
+        renderTaskPagination(data, 0);
+        return;
+      }
+      const pageSize = leadersState.taskPageSize;
+      const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+      if (leadersState.taskPage > totalPages) leadersState.taskPage = totalPages;
+      const start = (leadersState.taskPage - 1) * pageSize;
+      const visible = items.slice(start, start + pageSize);
+      body.innerHTML = visible.map((item) => {
+        const pct = item.change_pct == null ? '-' :
+          ((item.change_pct >= 0 ? '+' : '') + item.change_pct.toFixed(2) + '%');
+        const pctClass = item.change_pct == null ? '' :
+          (item.change_pct >= 0 ? 'forecast-up' : 'forecast-down');
+        return '<tr data-symbol="' + escapeHtml(item.symbol) + '">' +
+          '<td>' + escapeHtml(item.code) + '</td>' +
+          '<td><div class="task-name"><span>' + escapeHtml(item.name) + '</span><small>' +
+            escapeHtml(item.industry || '-') + '</small></div></td>' +
+          '<td><div class="task-price"><span>' + fmtPrice(item.price) + '</span><small class="' +
+            pctClass + '">' + pct + '</small></div></td>' +
+          '<td>' + (item.boards == null ? '-' : item.boards) + '</td>' +
+          '<td>' + taskCell(item.ma5) + '</td>' +
+          '<td>' + taskCell(item.ma10) + '</td>' +
+          '<td>' + taskCell(item.ma20) + '</td>' +
+          '</tr>';
+      }).join('');
+      renderTaskPagination(data, totalPages);
+    }
+
+    function renderTaskPagination(data, totalPages) {
+      const page = leadersState.taskPage;
+      const count = (data && data.items) ? data.items.length : 0;
+      $('taskPageInfo').textContent = totalPages > 0
+        ? '第 ' + page + ' / ' + totalPages + ' 页 · 共 ' + count + ' 条'
+        : '';
+      const container = $('taskPages');
+      if (totalPages <= 0) {
+        container.innerHTML = '';
+        return;
+      }
+      const parts = [pageButton('上一页', page - 1, page <= 1, false)];
+      paginationItems(page, totalPages).forEach((item) => {
+        if (item === '...') {
+          parts.push('<span class="page-ellipsis">…</span>');
+        } else {
+          parts.push(pageButton(String(item), item, false, item === page));
+        }
+      });
+      parts.push(pageButton('下一页', page + 1, page >= totalPages, false));
+      container.innerHTML = parts.join('');
+    }
+
     function setLeaderView(view) {
       leadersState.view = view;
       const isList = view === 'list';
+      const isIndustry = view === 'industry';
+      const isTask = view === 'task';
       $('leadersListWrap').classList.toggle('hidden', !isList);
       $('leadersPagination').classList.toggle('hidden', !isList);
-      $('leadersIndustryWrap').classList.toggle('hidden', isList);
+      $('leadersIndustryWrap').classList.toggle('hidden', !isIndustry);
+      $('leadersTaskWrap').classList.toggle('hidden', !isTask);
+      $('taskPagination').classList.toggle('hidden', !isTask);
+      $('leadersIndustry').classList.toggle('hidden', isTask);
+      $('leadersPageSize').classList.toggle('hidden', isTask);
       $('viewList').classList.toggle('active', isList);
-      $('viewIndustry').classList.toggle('active', !isList);
+      $('viewIndustry').classList.toggle('active', isIndustry);
+      $('viewTask').classList.toggle('active', isTask);
+      if (isTask) loadTask();
       updateLeadersSummary();
     }
 
@@ -1688,7 +1831,11 @@
 
     $('viewList').addEventListener('click', () => setLeaderView('list'));
     $('viewIndustry').addEventListener('click', () => setLeaderView('industry'));
-    $('leadersRefresh').addEventListener('click', () => loadLeaders(leadersState.page));
+    $('viewTask').addEventListener('click', () => setLeaderView('task'));
+    $('leadersRefresh').addEventListener('click', () => {
+      if (leadersState.view === 'task') loadTask();
+      else loadLeaders(leadersState.page);
+    });
     $('leadersIndustry').addEventListener('change', () => {
       leadersState.industry = $('leadersIndustry').value;
       leadersState.page = 1;
@@ -1723,6 +1870,44 @@
       load(symbol);
     });
 
+    $('taskPageSize').addEventListener('change', () => {
+      leadersState.taskPageSize = Number($('taskPageSize').value) || 10;
+      leadersState.taskPage = 1;
+      renderTask();
+      updateLeadersSummary();
+    });
+    $('taskPages').addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-page]');
+      if (!button || button.disabled) return;
+      const page = Number(button.dataset.page);
+      if (!Number.isInteger(page) || page < 1) return;
+      const total = Math.max(1, Math.ceil((leadersState.taskItems || []).length / leadersState.taskPageSize));
+      if (page > total || page === leadersState.taskPage) return;
+      leadersState.taskPage = page;
+      renderTask();
+      updateLeadersSummary();
+    });    $('taskBody').addEventListener('click', (event) => {
+      const row = event.target.closest('tr[data-symbol]');
+      if (!row) return;
+      const symbol = row.dataset.symbol;
+      if (!symbol) return;
+      $('symbol').value = symbol;
+      load(symbol);
+    });
+
+    const leadersPanel = document.querySelector('.leaders-panel');
+    if (leadersPanel) {
+      try {
+        if (localStorage.getItem('leadersPanelOpen') === 'closed') leadersPanel.open = false;
+        leadersPanel.addEventListener('toggle', () => {
+          localStorage.setItem('leadersPanelOpen', leadersPanel.open ? 'open' : 'closed');
+        });
+      } catch (error) {
+      }
+      leadersPanel.querySelector('summary').addEventListener('click', (event) => {
+        if (event.target.closest('input, button, select')) event.preventDefault();
+      });
+    }
     const watchPanel = document.querySelector('.watch-panel');
     if (watchPanel) {
       try {

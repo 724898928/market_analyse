@@ -2,6 +2,7 @@ mod deriv;
 mod market;
 mod prediction;
 
+use std::cmp::Ordering;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::task::JoinSet;
 
 use crate::deriv::{derivatives_sparse, moving_average as moving_average_series};
 use crate::market::{
@@ -60,6 +62,7 @@ async fn main() {
         .route("/api/watchlist", get(api_watchlist))
         .route("/api/watchlist/add", post(api_watch_add))
         .route("/api/watchlist/remove", delete(api_watch_remove))
+        .route("/api/task", get(api_task))
         .with_state(AppState { http });
 
     let port = std::env::var("PORT")
@@ -82,8 +85,13 @@ async fn main() {
     axum::serve(listener, app).await.expect("Web 服务运行失败");
 }
 
-async fn index() -> Html<&'static str> {
-    Html(include_str!("static/index.html"))
+async fn index() -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    (headers, Html(include_str!("static/index.html")))
 }
 
 async fn echarts_js() -> impl IntoResponse {
@@ -194,6 +202,35 @@ struct DerivOut {
     ma5: SeriesOut,
     ma10: SeriesOut,
     ma20: SeriesOut,
+}
+
+#[derive(Serialize)]
+struct TaskSignal {
+    current: f64,
+    predicted: f64,
+    direction: String,
+}
+
+#[derive(Serialize)]
+struct TaskStock {
+    code: String,
+    symbol: String,
+    name: String,
+    price: Option<f64>,
+    change_pct: Option<f64>,
+    boards: Option<i64>,
+    industry: Option<String>,
+    ma5: TaskSignal,
+    ma10: TaskSignal,
+    ma20: TaskSignal,
+}
+
+#[derive(Serialize)]
+struct TaskBoard {
+    date: String,
+    total: usize,
+    matched: usize,
+    items: Vec<TaskStock>,
 }
 
 async fn api_kline(
@@ -375,6 +412,110 @@ async fn api_watch_remove(
     parse_symbol(&symbol).map_err(ApiError::BadRequest)?;
     prediction::remove_watch(&symbol).map_err(ApiError::Upstream)?;
     Ok(Json(json!({ "ok": true })))
+}
+
+fn task_signal(bars: &[KlineBar], window: usize) -> Option<TaskSignal> {
+    if bars.len() <= window {
+        return None;
+    }
+    let closes: Vec<f64> = bars.iter().map(|bar| bar.close).collect();
+    let ma = moving_average_series(&closes, window);
+    let last = ma.len() - 1;
+    let current = ma[last]?;
+    let previous = ma[last - 1]?;
+    if !current.is_finite() || !previous.is_finite() {
+        return None;
+    }
+    let change = current - previous;
+    let close_change = closes[last] - closes[last - 1];
+    let damping = if change * close_change > 0.0 {
+        1.0
+    } else {
+        0.3
+    };
+    let direction = if change > 1e-9 {
+        "上行"
+    } else if change < -1e-9 {
+        "下行"
+    } else {
+        "持平"
+    };
+    Some(TaskSignal {
+        current,
+        predicted: current + change * damping,
+        direction: direction.to_string(),
+    })
+}
+
+async fn api_task(State(state): State<AppState>) -> Result<Json<TaskBoard>, ApiError> {
+    let board = fetch_daily_leaders(&state.http, 1, 100, None)
+        .await
+        .map_err(ApiError::Upstream)?;
+    let client = state.http.clone();
+    let mut matched = Vec::new();
+
+    for chunk in board.items.chunks(12) {
+        let mut tasks = JoinSet::new();
+        for leader in chunk {
+            let symbol = leader.symbol.clone();
+            let info = match parse_symbol(&symbol) {
+                Ok(info) => info,
+                Err(_) => continue,
+            };
+            let client = client.clone();
+            let leader = leader.clone();
+            tasks.spawn(async move {
+                let data =
+                    fetch_market_data(&client, &info, Period::Day, 60, 1, DataSource::Eastmoney)
+                        .await
+                        .ok()?;
+                let ma5 = task_signal(&data.bars, 5)?;
+                let ma10 = task_signal(&data.bars, 10)?;
+                let ma20 = task_signal(&data.bars, 20)?;
+                if ma5.direction == "上行" && ma10.direction == "下行" && ma20.direction == "下行"
+                {
+                    Some(TaskStock {
+                        code: leader.code,
+                        symbol: leader.symbol,
+                        name: leader.name,
+                        price: leader.price,
+                        change_pct: leader.change_pct,
+                        boards: leader.boards,
+                        industry: leader.industry,
+                        ma5,
+                        ma10,
+                        ma20,
+                    })
+                } else {
+                    None
+                }
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            if let Ok(Some(item)) = result {
+                matched.push(item);
+            }
+        }
+    }
+
+    matched.sort_by(|a, b| {
+        b.boards
+            .unwrap_or(0)
+            .cmp(&a.boards.unwrap_or(0))
+            .then_with(|| {
+                b.change_pct
+                    .unwrap_or(0.0)
+                    .partial_cmp(&a.change_pct.unwrap_or(0.0))
+                    .unwrap_or(Ordering::Equal)
+            })
+    });
+
+    Ok(Json(TaskBoard {
+        date: board.date,
+        total: board.total,
+        matched: matched.len(),
+        items: matched,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
