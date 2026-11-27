@@ -8,7 +8,7 @@ use std::time::Duration;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -57,6 +57,9 @@ async fn main() {
         .route("/api/quote", get(api_quote))
         .route("/api/leaders", get(api_leaders))
         .route("/api/predictions", get(api_predictions))
+        .route("/api/watchlist", get(api_watchlist))
+        .route("/api/watchlist/add", post(api_watch_add))
+        .route("/api/watchlist/remove", delete(api_watch_remove))
         .with_state(AppState { http });
 
     let port = std::env::var("PORT")
@@ -127,6 +130,12 @@ struct PredictionQuery {
     source: Option<String>,
     mode: Option<String>,
     limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchQuery {
+    symbol: Option<String>,
+    name: Option<String>,
 }
 
 enum ApiError {
@@ -337,6 +346,37 @@ async fn api_predictions(
     .map_err(ApiError::Upstream)
 }
 
+async fn api_watchlist() -> Result<Json<Vec<prediction::WatchItem>>, ApiError> {
+    prediction::list_watch()
+        .map(Json)
+        .map_err(ApiError::Upstream)
+}
+
+async fn api_watch_add(
+    Query(query): Query<WatchQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let symbol = query.symbol.unwrap_or_default().trim().to_string();
+    if symbol.is_empty() {
+        return Err(ApiError::BadRequest("请输入股票代码".to_string()));
+    }
+    parse_symbol(&symbol).map_err(ApiError::BadRequest)?;
+    prediction::add_watch(&symbol, query.name.as_deref().unwrap_or(""))
+        .map_err(ApiError::Upstream)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn api_watch_remove(
+    Query(query): Query<WatchQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let symbol = query.symbol.unwrap_or_default().trim().to_string();
+    if symbol.is_empty() {
+        return Err(ApiError::BadRequest("请输入股票代码".to_string()));
+    }
+    parse_symbol(&symbol).map_err(ApiError::BadRequest)?;
+    prediction::remove_watch(&symbol).map_err(ApiError::Upstream)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_response(
     symbol: String,
@@ -356,6 +396,7 @@ fn build_response(
             "有效K线数量不足，至少需要3根".to_string(),
         ));
     }
+    let _ = prediction::record_analysis(&symbol, &name);
 
     let (unit, x_axis) = match mode {
         "index" => (

@@ -165,11 +165,23 @@
     }
     .leaders-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
     .leaders-head h2 span { color: var(--muted); font-weight: 400; font-size: 12px; }
+    .watch-panel > summary { cursor: pointer; list-style: none; }
+    .watch-panel > summary::-webkit-details-marker { display: none; }
+    .watch-panel > summary::before {
+      content: '▾';
+      color: var(--muted);
+      font-size: 12px;
+      margin-right: 6px;
+    }
+    .watch-panel:not([open]) > summary::before { content: '▸'; }
     .leaders-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
     .leaders-actions .hint { font-size: 12px; }
     .leaders-actions select { height: 30px; padding: 0 8px; font-size: 12px; }
     .leaders-actions button { height: 30px; padding: 0 12px; font-size: 12px; }
     .leaders-actions select#leadersIndustry { max-width: 160px; }
+    .leaders-actions input#watchSymbol { max-width: 240px; }
+    .leaders-actions input#watchName { max-width: 150px; }
+    .watch-remove { height: 26px; padding: 0 10px; font-size: 12px; }
     .view-switch {
       display: inline-flex;
       border: 1px solid #2b3a52;
@@ -302,6 +314,29 @@
       <div class="quote-change" id="qChange">-</div>
       <div class="quote-meta" id="qMeta"></div>
     </section>
+
+    <details class="panel watch-panel" open>
+      <summary class="leaders-head">
+        <h2>自选股</h2>
+        <div class="leaders-actions">
+          <input id="watchSymbol" placeholder="sh600000 / 000001 / hk00700 / usAAPL" autocomplete="off">
+          <input id="watchName" placeholder="备注名称（可选）" autocomplete="off">
+          <button id="watchAdd" type="button">添加</button>
+          <button id="watchRefresh" class="ghost" type="button">刷新</button>
+        </div>
+      </summary>
+      <div id="watchSummary" class="hint leaders-summary">分析过的股票会自动加入；首个代码为默认行情；点击行加载K线，可手动添加或删除</div>
+      <div class="leaders-table-wrap">
+        <table>
+          <thead>
+            <tr><th>代码</th><th>名称</th><th>分析次数</th><th>最近分析</th><th>操作</th></tr>
+          </thead>
+          <tbody id="watchBody">
+            <tr><td colspan="5" class="table-empty">正在加载自选股…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
 
     <section class="panel">
       <div class="leaders-head">
@@ -1059,6 +1094,7 @@
       renderForecast(data);
       renderCompare(data, dates, start, end);
       loadHistory(data, dates, start, end);
+      loadWatchlist();
       renderKline(data, dates, closes, ohlc, volumes, start, end);
       charts.d1.setOption(
         derivativeOption('均线价格/' + data.unit, data.deriv, 'd1', dates, start, end, false),
@@ -1367,6 +1403,65 @@
         '单位：均线价格/' + data.unit + '，均线价格/' + data.unit2 + ' · 最新时间：' + data.bars[last].date;
     }
 
+    async function loadWatchlist(applyDefault = false) {
+      try {
+        const response = await fetch('/api/watchlist');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const items = await response.json();
+        if (applyDefault && items.length > 0 && items[0].symbol) {
+          $('symbol').value = items[0].symbol;
+        }
+        const rows = items.map((item) => {
+          const time = String(item.analyzed_at || '').slice(0, 16).replace('T', ' ');
+          return '<tr data-symbol="' + escapeHtml(item.symbol) + '">' +
+            '<td>' + escapeHtml(item.symbol) + '</td>' +
+            '<td>' + escapeHtml(item.name) + '</td>' +
+            '<td>' + item.hits + '</td>' +
+            '<td>' + escapeHtml(time) + '</td>' +
+            '<td><button type="button" class="ghost watch-remove" data-remove="' + escapeHtml(item.symbol) + '">删除</button></td>' +
+            '</tr>';
+        }).join('');
+        $('watchBody').innerHTML = rows || '<tr><td colspan="5" class="table-empty">暂无自选股，分析过的股票会自动加入</td></tr>';
+        $('watchSummary').textContent = '共 ' + items.length + ' 只 · 首个代码为默认行情 · 点击行加载或添加/删除';
+      } catch (error) {
+        $('watchBody').innerHTML = '<tr><td colspan="5" class="table-empty">自选股加载失败：' + escapeHtml(error.message) + '</td></tr>';
+      }
+    }
+
+    async function addWatch() {
+      const symbol = $('watchSymbol').value.trim();
+      if (!symbol) {
+        setStatus('请输入要添加的股票代码', 'error');
+        return;
+      }
+      const params = new URLSearchParams({ symbol, name: $('watchName').value.trim() });
+      try {
+        const response = await fetch('/api/watchlist/add?' + params.toString(), { method: 'POST' });
+        let result;
+        try { result = await response.json(); } catch (error) { result = {}; }
+        if (!response.ok) throw new Error(result.error || ('HTTP ' + response.status));
+        $('watchSymbol').value = '';
+        $('watchName').value = '';
+        await loadWatchlist();
+        setStatus('已添加自选股 ' + symbol, 'ok');
+      } catch (error) {
+        setStatus('添加自选股失败：' + error.message, 'error');
+      }
+    }
+
+    async function removeWatch(symbol) {
+      const params = new URLSearchParams({ symbol });
+      try {
+        const response = await fetch('/api/watchlist/remove?' + params.toString(), { method: 'DELETE' });
+        let result;
+        try { result = await response.json(); } catch (error) { result = {}; }
+        if (!response.ok) throw new Error(result.error || ('HTTP ' + response.status));
+        await loadWatchlist();
+        setStatus('已删除自选股 ' + symbol, 'ok');
+      } catch (error) {
+        setStatus('删除自选股失败：' + error.message, 'error');
+      }
+    }
     async function loadLeaders(page = leadersState.page, silent = false) {
       if (leadersState.loading) return;
       leadersState.loading = true;
@@ -1628,9 +1723,41 @@
       load(symbol);
     });
 
+    const watchPanel = document.querySelector('.watch-panel');
+    if (watchPanel) {
+      try {
+        if (localStorage.getItem('watchPanelOpen') === 'closed') watchPanel.open = false;
+        watchPanel.addEventListener('toggle', () => {
+          localStorage.setItem('watchPanelOpen', watchPanel.open ? 'open' : 'closed');
+        });
+      } catch (error) {
+      }
+    }
+    if (watchPanel) {
+      watchPanel.querySelector('summary').addEventListener('click', (event) => {
+        if (event.target.closest('input, button')) event.preventDefault();
+      });
+    }
+    $('watchAdd').addEventListener('click', addWatch);
+    $('watchSymbol').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') addWatch();
+    });
+    $('watchRefresh').addEventListener('click', () => loadWatchlist());
+    $('watchBody').addEventListener('click', (event) => {
+      const removeButton = event.target.closest('button[data-remove]');
+      if (removeButton) {
+        removeWatch(removeButton.dataset.remove);
+        return;
+      }
+      const row = event.target.closest('tr[data-symbol]');
+      if (!row) return;
+      const symbol = row.dataset.symbol;
+      $('symbol').value = symbol;
+      Promise.resolve(load(symbol)).then(() => loadWatchlist());
+    });
     ensureCharts();
     setLeaderView('list');
-    load();
+    loadWatchlist(true).then(() => load());
     loadLeaders(1);
   </script>
 </body>

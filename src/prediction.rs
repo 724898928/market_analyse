@@ -49,6 +49,15 @@ pub struct HistoryPoint {
     pub ma20_actual: Option<f64>,
 }
 
+#[derive(Serialize)]
+pub struct WatchItem {
+    pub symbol: String,
+    pub name: String,
+    pub created_at: String,
+    pub analyzed_at: String,
+    pub hits: i64,
+}
+
 struct RowData {
     series: String,
     horizon: i64,
@@ -93,7 +102,14 @@ fn open_db() -> Result<Connection, String> {
              UNIQUE(symbol, period, source, mode, series, base_time_ms, horizon, target_time_ms)
          );
          CREATE INDEX IF NOT EXISTS idx_predictions_lookup
-             ON predictions(symbol, period, source, mode, target_time_ms);",
+             ON predictions(symbol, period, source, mode, target_time_ms);
+         CREATE TABLE IF NOT EXISTS watchlist (
+             symbol TEXT PRIMARY KEY,
+             name TEXT NOT NULL,
+             created_at TEXT NOT NULL,
+             analyzed_at TEXT NOT NULL,
+             hits INTEGER NOT NULL DEFAULT 0
+         );",
     )
     .map_err(|error| error.to_string())?;
     Ok(conn)
@@ -442,6 +458,87 @@ pub fn history(
         by_horizon,
         points,
     })
+}
+
+fn clean_watch_input(symbol: &str, name: &str) -> (String, String) {
+    let symbol = symbol.trim().to_string();
+    let name = name.trim();
+    let name = if name.is_empty() {
+        symbol.clone()
+    } else {
+        name.to_string()
+    };
+    (symbol, name)
+}
+
+pub fn record_analysis(symbol: &str, name: &str) -> Result<(), String> {
+    if symbol.trim().is_empty() || symbol.eq_ignore_ascii_case("demo") {
+        return Ok(());
+    }
+    let (symbol, name) = clean_watch_input(symbol, name);
+    let conn = open_db()?;
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO watchlist (symbol, name, created_at, analyzed_at, hits)
+         VALUES (?1, ?2, ?3, ?3, 1)
+         ON CONFLICT(symbol) DO UPDATE SET
+             name=excluded.name, analyzed_at=excluded.analyzed_at, hits=watchlist.hits+1",
+        params![symbol, name, now],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub fn add_watch(symbol: &str, name: &str) -> Result<(), String> {
+    let (symbol, name) = clean_watch_input(symbol, name);
+    if symbol.is_empty() {
+        return Err("请输入股票代码".to_string());
+    }
+    let conn = open_db()?;
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO watchlist (symbol, name, created_at, analyzed_at, hits)
+         VALUES (?1, ?2, ?3, ?3, 0)
+         ON CONFLICT(symbol) DO UPDATE SET name=excluded.name",
+        params![symbol, name, now],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub fn remove_watch(symbol: &str) -> Result<(), String> {
+    let symbol = symbol.trim();
+    if symbol.is_empty() {
+        return Ok(());
+    }
+    let conn = open_db()?;
+    conn.execute("DELETE FROM watchlist WHERE symbol=?1", params![symbol])
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub fn list_watch() -> Result<Vec<WatchItem>, String> {
+    let conn = open_db()?;
+    let mut statement = conn
+        .prepare(
+            "SELECT symbol, name, created_at, analyzed_at, hits
+             FROM watchlist
+             ORDER BY analyzed_at DESC, created_at DESC",
+        )
+        .map_err(|error| error.to_string())?;
+    statement
+        .query_map([], |row| {
+            Ok(WatchItem {
+                symbol: row.get(0)?,
+                name: row.get(1)?,
+                created_at: row.get(2)?,
+                analyzed_at: row.get(3)?,
+                hits: row.get(4)?,
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
